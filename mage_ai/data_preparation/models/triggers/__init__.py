@@ -10,6 +10,7 @@ import yaml
 from mage_ai.data_preparation.models.constants import PIPELINES_FOLDER
 from mage_ai.settings.repo import get_repo_path
 from mage_ai.shared.config import BaseConfig
+from mage_ai.shared.constants import VALID_ENVS
 from mage_ai.shared.hash import index_by
 from mage_ai.shared.io import safe_write
 
@@ -39,6 +40,7 @@ class ScheduleInterval(str, enum.Enum):
 class SettingsConfig(BaseConfig):
     skip_if_previous_running: bool = False
     allow_blocks_to_fail: bool = False
+    landing_time_enabled: bool = False
 
 
 @dataclass
@@ -59,6 +61,8 @@ class Trigger(BaseConfig):
             self.schedule_type = ScheduleType(self.schedule_type)
         if self.status and type(self.status) is str:
             self.status = ScheduleStatus(self.status)
+        if any(env not in VALID_ENVS for env in self.envs):
+            raise Exception(f'Please provide valid env values inside {list(VALID_ENVS)}.')
 
     def to_dict(self) -> Dict:
         return dict(
@@ -135,6 +139,7 @@ def build_triggers(
                 raise Exception(
                     f'Failed to parse trigger config {trigger_config}. {str(e)}') from e
             else:
+                print(f'Failed to parse trigger config for pipeline {pipeline_uuid}')
                 traceback.print_exc()
     return triggers
 

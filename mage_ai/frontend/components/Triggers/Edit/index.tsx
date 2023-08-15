@@ -4,6 +4,7 @@ import React, {
   useMemo,
   useState,
 } from 'react';
+import moment from 'moment';
 import { toast } from 'react-toastify';
 import { useMutation } from 'react-query';
 import { useRouter } from 'next/router';
@@ -35,6 +36,8 @@ import PipelineVariableType, { GLOBAL_VARIABLES_UUID } from '@interfaces/Pipelin
 import Select from '@oracle/elements/Inputs/Select';
 import Spacing from '@oracle/elements/Spacing';
 import Table from '@components/shared/Table';
+import TagType from '@interfaces/TagType';
+import TagsAutocompleteInputField from '@components/Tags/TagsAutocompleteInputField';
 import Text from '@oracle/elements/Text';
 import TextInput from '@oracle/elements/Inputs/TextInput';
 import ToggleSwitch from '@oracle/elements/Inputs/ToggleSwitch';
@@ -45,6 +48,7 @@ import {
   CalendarDate,
   Code,
   Schedule,
+  Switch,
   Trash,
 } from '@oracle/icons';
 import { BlockTypeEnum } from '@interfaces/BlockType';
@@ -57,11 +61,18 @@ import {
   UNITS_BETWEEN_SECTIONS,
 } from '@oracle/styles/units/spacing';
 import { PageNameEnum } from '@components/PipelineDetailPage/constants';
+import {
+  convertSeconds,
+  convertToSeconds,
+  getTimeInUTC,
+  getTriggerApiEndpoint,
+  TIME_UNIT_TO_SECONDS,
+} from '../utils';
 import { getFormattedVariables, parseVariables } from '@components/Sidekick/utils';
-import { indexBy, removeAtIndex } from '@utils/array';
+import { indexBy, pushUnique, range, removeAtIndex } from '@utils/array';
 import { isEmptyObject, selectKeys } from '@utils/hash';
+import { isNumeric, pluralize } from '@utils/string';
 import { onSuccess } from '@api/utils/response';
-import { convertSeconds, convertToSeconds, getTimeInUTC, TIME_UNIT_TO_SECONDS } from '../utils';
 
 const getTriggerTypes = (
   isStreamingPipeline?: boolean,
@@ -121,7 +132,7 @@ function Edit({
 
   const [settings, setSettings] = useState<PipelineScheduleSettingsType>();
   const [runtimeVariables, setRuntimeVariables] = useState<{ [ variable: string ]: string }>({});
-  const [schedule, setSchedule] = useState<PipelineScheduleType>(pipelineSchedule);
+  const [schedule, setSchedule] = useState<PipelineScheduleType>(null);
   const [showCalendar, setShowCalendar] = useState<boolean>(false);
   const [customInterval, setCustomInterval] = useState<string>(null);
 
@@ -139,6 +150,7 @@ function Edit({
     settings: settingsInit = {},
     sla,
     start_time: startTime,
+    tags,
     variables: scheduleVariablesInit = {},
   } = schedule || {};
 
@@ -150,6 +162,19 @@ function Edit({
 
   const [date, setDate] = useState<Date>(null);
   const [time, setTime] = useState<TimeType>({ hour: '00', minute: '00' });
+  const [landingTimeData, setLandingTimeData] = useState<{
+    dayOfMonth?: number;
+    dayOfWeek?: number;
+    hour?: number;
+    minute?: number;
+    second?: number;
+  }>({
+    dayOfMonth: null,
+    dayOfWeek: null,
+    hour: null,
+    minute: null,
+    second: null,
+  });
 
   const { data: dataEventRules } =
     api.event_rules.detail(ScheduleTypeEnum.EVENT === scheduleType ? 'aws' : null);
@@ -188,6 +213,15 @@ function Edit({
         setTime({
           hour: timePart.substring(0, 2),
           minute: timePart.substring(3, 5),
+        });
+
+        const mt = moment(startTime).utc();
+        setLandingTimeData({
+          dayOfMonth: mt.date(),
+          dayOfWeek: mt.day(),
+          hour: mt.hours(),
+          minute: mt.minutes(),
+          second: mt.seconds(),
         });
       } else {
         const currentDatetime = new Date();
@@ -236,9 +270,12 @@ function Edit({
 
   useEffect(
     () => {
-      if (pipelineSchedule) {
+      if (pipelineSchedule && !schedule) {
         setEventMatchers(pipelineSchedule.event_matchers);
-        if (isCustomInterval) {
+        const custom = pipelineSchedule?.schedule_interval &&
+          !Object.values(ScheduleIntervalEnum).includes(pipelineSchedule?.schedule_interval as ScheduleIntervalEnum);
+
+        if (custom) {
           setCustomInterval(pipelineSchedule?.schedule_interval);
           setSchedule({
             ...pipelineSchedule,
@@ -260,7 +297,7 @@ function Edit({
         if (slaFromSchedule) {
           setEnableSLA(true);
 
-          const { time, unit } = convertSeconds(sla);
+          const { time, unit } = convertSeconds(slaFromSchedule);
           setSchedule(schedule => ({
             ...schedule,
             slaAmount: time,
@@ -270,19 +307,37 @@ function Edit({
       }
     },
     [
-      isCustomInterval,
       isStreamingPipeline,
       pipelineSchedule,
+      schedule,
       scheduleInterval,
-      sla,
     ],
   );
+
+  const landingTimeEnabled = useMemo(() => !!settings?.landing_time_enabled, [settings]);
+  const landingTimeDisabled = useMemo(() => ScheduleTypeEnum.TIME !== scheduleType
+    || ![
+      ScheduleIntervalEnum.DAILY,
+      ScheduleIntervalEnum.HOURLY,
+      ScheduleIntervalEnum.MONTHLY,
+      ScheduleIntervalEnum.WEEKLY,
+    ].includes(scheduleInterval as ScheduleIntervalEnum),
+    [
+      scheduleInterval,
+      scheduleType,
+    ],
+  );
+  const showLandingTime = useMemo(() => landingTimeEnabled && !landingTimeDisabled, [
+    landingTimeDisabled,
+    landingTimeEnabled,
+  ]);
 
   const onSave = useCallback(() => {
     const data = {
       ...selectKeys(schedule, [
         'name',
         'schedule_type',
+        'tags',
       ]),
       event_matchers: [],
       schedule_interval: null,
@@ -290,7 +345,36 @@ function Edit({
       variables: parseVariables(runtimeVariables),
     };
 
-    if (ScheduleTypeEnum.EVENT === schedule.schedule_type) {
+    if (showLandingTime) {
+      const {
+        dayOfMonth,
+        dayOfWeek,
+        hour,
+        minute,
+        second,
+      } = landingTimeData;
+      // This month of this year has 31 days (most days in a single month);
+      let mt = moment('2023-07-01').utc();
+
+      if (isNumeric(dayOfMonth)) {
+        mt = mt.date(dayOfMonth);
+      }
+      if (isNumeric(dayOfWeek)) {
+        mt = mt.day(dayOfWeek);
+      }
+      if (isNumeric(hour)) {
+        mt = mt.hours(hour);
+      }
+      if (isNumeric(minute)) {
+        mt = mt.minutes(minute);
+      }
+      if (isNumeric(second)) {
+        mt = mt.seconds(second);
+      }
+
+      data.schedule_interval = isCustomInterval ? customInterval : schedule.schedule_interval;
+      data.start_time = mt.toISOString();
+    } else if (ScheduleTypeEnum.EVENT === schedule.schedule_type) {
       data.event_matchers = eventMatchers;
     } else {
       data.schedule_interval = isCustomInterval ? customInterval : schedule.schedule_interval;
@@ -330,12 +414,228 @@ function Edit({
     enableSLA,
     eventMatchers,
     isCustomInterval,
+    landingTimeData,
     pipelineSchedule,
     runtimeVariables,
     schedule,
     settings,
+    showLandingTime,
     time,
     updateSchedule,
+  ]);
+
+  const runtimeAverage = useMemo(() => {
+    if (!pipelineSchedule?.runtime_average) {
+      return 'Trigger doesn’t have enough history to estimate runtime.';
+    }
+
+    const runtime = Number(pipelineSchedule?.runtime_average);
+
+    const hours = Math.max(
+      Math.floor(runtime / (60 * 60)),
+      0,
+    );
+    const minutes = Math.max(
+      Math.floor((runtime - (hours * 60 * 60)) / 60),
+      0,
+    );
+    const seconds = Math.max(
+      Math.floor(runtime - ((hours * 60 * 60) + (minutes * 60))),
+      0,
+    );
+
+    const strings = [];
+
+    if (hours >= 1) {
+      strings.push(pluralize('hour', hours, true));
+    }
+
+    if (minutes >= 1) {
+      strings.push(pluralize('minute', minutes, true));
+    }
+
+    if (seconds >= 1) {
+      strings.push(pluralize('second', seconds, true));
+    }
+
+    return strings.join(' ');
+  }, [pipelineSchedule]);
+
+  const landingTimeInputs = useMemo(() => {
+    if (!showLandingTime) {
+      return null;
+    }
+
+    const inputs = [
+      <Spacing key="Minute" mr={1}>
+        <Spacing mb={1}>
+          <Text bold default small>
+            Minute
+          </Text>
+        </Spacing>
+        <Select
+          compact
+          monospace
+          onChange={(e) => {
+            setLandingTimeData(prev => ({
+              ...prev,
+              minute: e.target.value,
+            }));
+          }}
+          value={landingTimeData?.minute || ''}
+        >
+          <option value="" />
+          {range(60).map((_, idx: number) => (
+            <option key={idx} value={idx}>
+              {idx >= 10 ? String(idx) : `0${idx}`}
+            </option>
+          ))}
+        </Select>
+      </Spacing>,
+      <Spacing key="Second" mr={1}>
+        <Spacing mb={1}>
+          <Text bold default small>
+            Second
+          </Text>
+        </Spacing>
+        <Select
+          compact
+          monospace
+          onChange={(e) => {
+            setLandingTimeData(prev => ({
+              ...prev,
+              second: e.target.value,
+            }));
+          }}
+          value={landingTimeData?.second || ''}
+        >
+          <option value="" />
+          {range(60).map((_, idx: number) => (
+            <option key={idx} value={idx}>
+              {idx >= 10 ? String(idx) : `0${idx}`}
+            </option>
+          ))}
+        </Select>
+      </Spacing>,
+    ];
+
+    if ([
+      ScheduleIntervalEnum.DAILY,
+      ScheduleIntervalEnum.MONTHLY,
+      ScheduleIntervalEnum.WEEKLY,
+    ].includes(scheduleInterval as ScheduleIntervalEnum)) {
+      inputs.unshift(
+        <Spacing key="Hour" mr={1}>
+          <Spacing mb={1}>
+            <Text bold default small>
+              Hour
+            </Text>
+          </Spacing>
+          <Select
+            compact
+            monospace
+            onChange={(e) => {
+              setLandingTimeData(prev => ({
+                ...prev,
+                hour: e.target.value,
+              }));
+            }}
+            value={landingTimeData?.hour || ''}
+          >
+            <option value="" />
+            {range(24).map((_, idx: number) => (
+              <option key={idx} value={idx}>
+                {idx >= 10 ? String(idx) : `0${idx}`}
+              </option>
+            ))}
+          </Select>
+        </Spacing>,
+      );
+    }
+
+    if (ScheduleIntervalEnum.WEEKLY === scheduleInterval) {
+      inputs.unshift(
+        <Spacing key="Day of the week" mr={1}>
+          <Spacing mb={1}>
+            <Text bold default small>
+              Day of the week
+            </Text>
+          </Spacing>
+          <Select
+            compact
+            monospace
+            onChange={(e) => {
+              setLandingTimeData(prev => ({
+                ...prev,
+                dayOfWeek: e.target.value,
+              }));
+            }}
+            value={landingTimeData?.dayOfWeek || ''}
+          >
+            <option value="" />
+            <option value={6}>
+              Sunday
+            </option>
+            <option value={0}>
+              Monday
+            </option>
+            <option value={1}>
+              Tuesday
+            </option>
+            <option value={2}>
+              Wednesday
+            </option>
+            <option value={3}>
+              Thursday
+            </option>
+            <option value={4}>
+              Friday
+            </option>
+            <option value={5}>
+              Saturday
+            </option>
+          </Select>
+        </Spacing>,
+      );
+    } else if (ScheduleIntervalEnum.MONTHLY === scheduleInterval) {
+      inputs.unshift(
+        <Spacing key="Day of the month" mr={1}>
+          <Spacing mb={1}>
+            <Text bold default small>
+              Day of the month
+            </Text>
+          </Spacing>
+          <Select
+            compact
+            monospace
+            onChange={(e) => {
+              setLandingTimeData(prev => ({
+                ...prev,
+                dayOfMonth: e.target.value,
+              }));
+            }}
+            value={landingTimeData?.dayOfMonth || ''}
+          >
+            <option value="" />
+            {range(31).map((_, idx: number) => (
+              <option key={idx + 1} value={idx + 1}>
+                {idx + 1 >= 10 ? String(idx + 1) : `0${idx + 1}`}
+              </option>
+            ))}
+          </Select>
+        </Spacing>,
+      );
+    }
+
+    return (
+      <FlexContainer>
+        {inputs}
+      </FlexContainer>
+    );
+  }, [
+    landingTimeData,
+    scheduleInterval,
+    showLandingTime,
   ]);
 
   const detailsMemo = useMemo(() => {
@@ -409,51 +709,124 @@ function Edit({
           </Spacing>
         </div>,
       ],
-      [
+    ];
+
+    if (showLandingTime) {
+      rows.push([
         <FlexContainer
           alignItems="center"
-          key="start_time"
+          key="frequency"
         >
-          <CalendarDate default size={1.5 * UNIT} />
+          <Switch default size={1.5 * UNIT} />
           <Spacing mr={1} />
           <Text default>
-            Start date and time
+            Enable landing time
           </Text>
         </FlexContainer>,
-        <div
-          key="start_time_input"
+
+        <div key="frequency_input">
+          <ToggleSwitch
+            checked={landingTimeEnabled}
+            disabled={landingTimeDisabled}
+            onCheck={() => {
+              setSettings(prev => ({
+                ...prev,
+                landing_time_enabled: !landingTimeEnabled,
+              }));
+            }}
+          />
+
+          <Spacing mt={1} p={1}>
+            {landingTimeDisabled && (
+              <Text muted small>
+                In order to enable landing time, the trigger’s frequency must
+                be {ScheduleIntervalEnum.HOURLY}, {ScheduleIntervalEnum.DAILY}, {ScheduleIntervalEnum.WEEKLY}, or {ScheduleIntervalEnum.MONTHLY}.
+              </Text>
+            )}
+            {!landingTimeDisabled && (
+              <Text muted small>
+                Instead of starting at a specific time,
+                this trigger will schedule pipeline runs at a time where it will finish
+                by the specified time below.
+              </Text>
+            )}
+          </Spacing>
+        </div>,
+      ]);
+
+      rows.push([
+        <FlexContainer
+          alignItems="center"
+          key="runtime_average"
+        >
+          <Schedule default size={1.5 * UNIT} />
+          <Spacing mr={1} />
+          <Text default>
+            Average runtime
+          </Text>
+        </FlexContainer>,
+        <FlexContainer
+          alignItems="center"
+          key="runtime_average_value"
           style={{ minHeight: `${UNIT * 5.75}px` }}
         >
-          {!showCalendar && (
-            <TextInput
-              monospace
-              onClick={() => setShowCalendar(val => !val)}
-              placeholder="YYYY-MM-DD HH:MM"
-              value={date
-                ? `${date.toISOString().split('T')[0]} ${time?.hour}:${time?.minute}`
-                : ''
-              }
-            />
-          )}
-          <div style={{ width: '400px' }}>
-            <ClickOutside
-              disableEscape
-              onClickOutside={() => setShowCalendar(false)}
-              open={showCalendar}
-              style={{ position: 'relative' }}
-            >
-              <Calendar
-                selectedDate={date}
-                selectedTime={time}
-                setSelectedDate={setDate}
-                setSelectedTime={setTime}
-                topPosition
+          <Text monospace>
+            {runtimeAverage}
+          </Text>
+        </FlexContainer>,
+      ]);
+    }
+
+    rows.push([
+      <FlexContainer
+        alignItems="center"
+        key="start_time"
+      >
+        <CalendarDate default size={1.5 * UNIT} />
+        <Spacing mr={1} />
+        <Text default>
+          {showLandingTime && 'Pipeline complete by'}
+          {!showLandingTime && 'Start date and time'}
+        </Text>
+      </FlexContainer>,
+
+      showLandingTime
+        ? landingTimeInputs
+        : (
+          <div
+            key="start_time_input"
+            style={{ minHeight: `${UNIT * 5.75}px` }}
+          >
+            {!showCalendar && (
+              <TextInput
+                monospace
+                onClick={() => setShowCalendar(val => !val)}
+                placeholder="YYYY-MM-DD HH:MM"
+                value={date
+                  ? `${date.toISOString().split('T')[0]} ${time?.hour}:${time?.minute}`
+                  : ''
+                }
               />
-            </ClickOutside>
+            )}
+            <div style={{ width: '400px' }}>
+              <ClickOutside
+                disableEscape
+                onClickOutside={() => setShowCalendar(false)}
+                open={showCalendar}
+                style={{ position: 'relative' }}
+              >
+                <Calendar
+                  selectedDate={date}
+                  selectedTime={time}
+                  setSelectedDate={setDate}
+                  setSelectedTime={setTime}
+                  topPosition
+                />
+              </ClickOutside>
+            </div>
           </div>
-        </div>,
-      ],
-    ];
+        ),
+    ]);
 
     if (isStreamingPipeline) {
       rows.splice(1, 1);
@@ -529,9 +902,14 @@ function Edit({
     date,
     isCustomInterval,
     isStreamingPipeline,
+    landingTimeDisabled,
+    landingTimeEnabled,
+    landingTimeInputs,
     name,
+    runtimeAverage,
     scheduleInterval,
     showCalendar,
+    showLandingTime,
     time,
   ]);
 
@@ -749,26 +1127,8 @@ function Edit({
     updateEventMatcher,
   ]);
 
-  const windowIsDefined = typeof window !== 'undefined';
-
   const apiMemo = useMemo(() => {
-    let url = '';
-    if (windowIsDefined) {
-      url = `${window.origin}/api/pipeline_schedules/${pipelineSchedule?.id}/pipeline_runs`;
-
-      if (pipelineSchedule?.token) {
-        url = `${url}/${pipelineSchedule.token}`;
-      }
-    }
-
-    let port;
-    if (windowIsDefined) {
-      port = window.location.port;
-
-      if (port) {
-        url = url.replace(port, '6789');
-      }
-    }
+    const url = getTriggerApiEndpoint(pipelineSchedule);
 
     return (
       <>
@@ -844,7 +1204,6 @@ function Edit({
 
           <Spacing mt={UNITS_BETWEEN_ITEMS_IN_SECTIONS}>
             <CopyToClipboard
-              withCopyIcon
               copiedText={`{
   "pipeline_run": {
     "variables": {
@@ -854,6 +1213,7 @@ function Edit({
   }
 }
 `}
+              withCopyIcon
             >
               <CodeBlock
                 language="json"
@@ -903,7 +1263,6 @@ function Edit({
   }, [
     name,
     pipelineSchedule,
-    windowIsDefined,
   ]);
 
   const saveButtonDisabled = !scheduleType || (
@@ -1139,6 +1498,13 @@ function Edit({
     settings,
   ]);
 
+  const { data: dataTags } = api.tags.list();
+  const unselectedTags =
+    useMemo(() => (dataTags?.tags || []).filter(({ uuid }) => !tags?.includes(uuid)), [
+      dataTags,
+      tags,
+    ]);
+
   return (
     <>
       <PipelineDetailPage
@@ -1179,8 +1545,8 @@ function Edit({
 
             <Button
               linkProps={{
-                href: '/pipelines/[pipeline]/triggers/[...slug]',
                 as: `/pipelines/${pipelineUUID}/triggers/${pipelineScheduleID}`,
+                href: '/pipelines/[pipeline]/triggers/[...slug]',
               }}
               noHoverUnderline
               outline
@@ -1268,12 +1634,41 @@ function Edit({
           </FlexContainer>
         </Spacing>
 
-        <Spacing mt={5}>
+        <Spacing mt={UNITS_BETWEEN_SECTIONS}>
           {ScheduleTypeEnum.TIME === scheduleType && detailsMemo}
           {ScheduleTypeEnum.EVENT === scheduleType && eventsMemo}
           {ScheduleTypeEnum.API === scheduleType && apiMemo}
         </Spacing>
 
+        <Spacing mt={UNITS_BETWEEN_SECTIONS} px={PADDING_UNITS}>
+          <Spacing mb={2}>
+            <Headline>
+              Tags
+            </Headline>
+
+            <Text muted>
+              Add or remove tags from this trigger.
+            </Text>
+          </Spacing>
+
+          <TagsAutocompleteInputField
+            removeTag={(tag: TagType) => {
+              setSchedule(prev => ({
+                ...prev,
+                tags: tags?.filter(uuid => uuid !== tag.uuid),
+              }));
+            }}
+            selectTag={(tag: TagType) => {
+              setSchedule(prev => ({
+                ...prev,
+                tags: pushUnique(tag.uuid, tags, uuid => uuid === tag.uuid),
+              }));
+            }}
+            selectedTags={tags?.map(tag => ({ uuid: tag }))}
+            tags={unselectedTags}
+            uuid={`TagsAutocompleteInputField-trigger-${pipelineScheduleID}`}
+          />
+        </Spacing>
       </PipelineDetailPage>
     </>
   );

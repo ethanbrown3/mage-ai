@@ -12,6 +12,7 @@ import { useRouter } from 'next/router';
 import ApiReloader from '@components/ApiReloader';
 import AuthToken from '@api/utils/AuthToken';
 import BlockType, {
+  BlockColorEnum,
   BlockLanguageEnum,
   BlockRequestPayloadType,
   BlockTypeEnum,
@@ -19,15 +20,19 @@ import BlockType, {
   SampleDataType,
 } from '@interfaces/BlockType';
 import BlocksInPipeline from '@components/PipelineDetail/BlocksInPipeline';
+import BrowseTemplates from '@components/CustomTemplates/BrowseTemplates';
 import Button from '@oracle/elements/Button';
 import ButtonTabs, { TabType } from '@oracle/components/Tabs/ButtonTabs';
 import ConfigureBlock from '@components/PipelineDetail/ConfigureBlock';
 import DataProviderType from '@interfaces/DataProviderType';
+import ErrorsType from '@interfaces/ErrorsType';
 import FileBrowser from '@components/FileBrowser';
 import FileEditor from '@components/FileEditor';
 import FileHeaderMenu from '@components/PipelineDetail/FileHeaderMenu';
 import FileTabs from '@components/PipelineDetail/FileTabs';
 import FlexContainer from '@oracle/components/FlexContainer';
+import GlobalDataProductType from '@interfaces/GlobalDataProductType';
+import GlobalDataProducts from '@components/GlobalDataProducts';
 import Head from '@oracle/elements/Head';
 import KernelStatus from '@components/PipelineDetail/KernelStatus';
 import KernelOutputType, {
@@ -35,6 +40,7 @@ import KernelOutputType, {
   ExecutionStateEnum,
 } from '@interfaces/KernelOutputType';
 import KeyboardShortcutButton from '@oracle/elements/Button/KeyboardShortcutButton';
+import Panel from '@oracle/components/Panel';
 import PipelineDetail from '@components/PipelineDetail';
 import PipelineLayout from '@components/PipelineLayout';
 import PipelineScheduleType from '@interfaces/PipelineScheduleType';
@@ -44,27 +50,30 @@ import PipelineType, {
   PipelineTypeEnum,
 } from '@interfaces/PipelineType';
 import PopupMenu from '@oracle/components/PopupMenu';
+import Preferences from '@components/settings/workspace/Preferences';
 import PrivateRoute from '@components/shared/PrivateRoute';
+import ProjectType from '@interfaces/ProjectType';
 import Sidekick from '@components/Sidekick';
 import SidekickHeader from '@components/Sidekick/Header';
 import Spacing from '@oracle/elements/Spacing';
 import api from '@api';
 import usePrevious from '@utils/usePrevious';
-
-import { Close } from '@oracle/icons';
 import {
+  BLOCK_EXISTS_ERROR,
   EDIT_BEFORE_TABS,
   EDIT_BEFORE_TAB_ALL_FILES,
   EDIT_BEFORE_TAB_FILES_IN_PIPELINE,
   PAGE_NAME_EDIT,
 } from '@components/PipelineDetail/constants';
+import { Close } from '@oracle/icons';
+import { ErrorProvider } from '@context/Error';
 import {
   FILE_EXTENSION_TO_LANGUAGE_MAPPING_REVERSE,
   SpecialFileEnum,
 } from '@interfaces/FileType';
 import { INTERNAL_OUTPUT_REGEX } from '@utils/models/output';
 import {
-  LOCAL_STORAGE_KEY_AUTOMATICALLY_NAME_BLOCKS,
+  // LOCAL_STORAGE_KEY_AUTOMATICALLY_NAME_BLOCKS,
   LOCAL_STORAGE_KEY_PIPELINE_EDIT_BEFORE_TAB_SELECTED,
   LOCAL_STORAGE_KEY_PIPELINE_EDIT_BLOCK_OUTPUT_LOGS,
   LOCAL_STORAGE_KEY_PIPELINE_EDIT_HIDDEN_BLOCKS,
@@ -75,7 +84,9 @@ import {
   set,
 } from '@storage/localStorage';
 import { HEADER_HEIGHT } from '@components/shared/Header/index.style';
+import { NAV_TAB_BLOCKS } from '@components/CustomTemplates/BrowseTemplates/constants';
 import { OAUTH2_APPLICATION_CLIENT_ID } from '@api/constants';
+import { ObjectType } from '@interfaces/BlockActionObjectType';
 import { PageNameEnum } from '@components/PipelineDetailPage/constants';
 import { PipelineHeaderStyle } from '@components/PipelineDetail/index.style';
 import {
@@ -97,9 +108,10 @@ import {
 import { cleanName, randomNameGenerator } from '@utils/string';
 import { displayErrorFromReadResponse, onSuccess } from '@api/utils/response';
 import { equals, find, indexBy, removeAtIndex } from '@utils/array';
+import { getBlockFromFilePath, getRelativePathFromBlock } from '@components/FileBrowser/utils';
 import { getWebSocket } from '@api/utils/url';
 import { goToWithQuery } from '@utils/routing';
-import { isEmptyObject } from '@utils/hash';
+import { ignoreKeys, isEmptyObject } from '@utils/hash';
 import { isJsonString } from '@utils/string';
 import { queryFromUrl } from '@utils/url';
 import { useModal } from '@context/Modal';
@@ -128,7 +140,8 @@ function PipelineDetailPage({
   const [afterHidden, setAfterHidden] =
     useState(!!get(LOCAL_STORAGE_KEY_PIPELINE_EDITOR_AFTER_HIDDEN));
   const [afterWidthForChildren, setAfterWidthForChildren] = useState<number>(null);
-  const [errors, setErrors] = useState(null);
+  const [errors, setErrors] = useState<ErrorsType>(null);
+  const [pipelineErrors, setPipelineErrors] = useState<ErrorsType>(null);
   const [recentlyAddedChart, setRecentlyAddedChart] = useState(null);
   const [selectedFilePath, setSelectedFilePath] = useState<string>(null);
   const [selectedFilePaths, setSelectedFilePaths] = useState<string[]>([]);
@@ -140,6 +153,9 @@ function PipelineDetailPage({
   const [disableShortcuts, setDisableShortcuts] = useState<boolean>(false);
   const [allowCodeBlockShortcuts, setAllowCodeBlockShortcuts] = useState<boolean>(false);
   const [depGraphZoom, setDepGraphZoom] = useState<number>(1);
+
+  const { data: dataProject, mutate: fetchProjects } = api.projects.list();
+  const project: ProjectType = useMemo(() => dataProject?.projects?.[0], [dataProject]);
 
   const localStorageTabSelectedKey =
     `${LOCAL_STORAGE_KEY_PIPELINE_EDIT_BEFORE_TAB_SELECTED}_${pipelineUUID}`;
@@ -265,9 +281,6 @@ function PipelineDetailPage({
     pipelineLastSavedState,
     showStalePipelineMessageModal,
   ]);
-  useEffect(() => {
-    displayErrorFromReadResponse(data, setErrors);
-  }, [data]);
 
   const qUrl = queryFromUrl();
   const {
@@ -415,11 +428,21 @@ function PipelineDetailPage({
   });
   const dataProviders: DataProviderType[] = dataDataProviders?.data_providers;
 
+  useEffect(() => {
+    let dataWithPotentialError = data;
+    if (!data?.hasOwnProperty('error') && dataDataProviders?.hasOwnProperty('error')) {
+      dataWithPotentialError = dataDataProviders;
+    }
+    displayErrorFromReadResponse(dataWithPotentialError, setPipelineErrors);
+  }, [data, dataDataProviders]);
+
   // Variables
   const {
     data: dataGlobalVariables,
     mutate: fetchVariables,
-  } = api.variables.pipelines.list(pipelineUUID, {}, {
+  } = api.variables.pipelines.list(pipelineUUID, {
+    global_only: true,
+  }, {
     revalidateOnFocus: false,
   });
   const globalVariables = dataGlobalVariables?.variables;
@@ -501,11 +524,12 @@ function PipelineDetailPage({
     data: blockOutputData,
     mutate: fetchSampleData,
   } = api.block_outputs.detail(
-    selectedOutputBlock?.type !== BlockTypeEnum.SCRATCHPAD
+    (!afterHidden && selectedOutputBlock?.type !== BlockTypeEnum.SCRATCHPAD
       && selectedOutputBlock?.type !== BlockTypeEnum.CHART
-      && selectedOutputBlock?.uuid
-      && encodeURIComponent(selectedOutputBlock?.uuid),
-    { pipeline_uuid: !afterHidden && pipelineUUID },
+      && selectedOutputBlock?.uuid)
+      ? encodeURIComponent(selectedOutputBlock?.uuid)
+      : null,
+    { pipeline_uuid: pipelineUUID },
   );
   const blockSampleData = useMemo(() => blockOutputData?.block_output, [blockOutputData]);
   const sampleData: SampleDataType = useMemo(() => {
@@ -522,7 +546,7 @@ function PipelineDetailPage({
     data: blockAnalysis,
     mutate: fetchAnalysis,
   } = api.blocks.pipelines.analyses.detail(
-    !afterHidden && pipelineUUID,
+    !afterHidden ? pipelineUUID : null,
     selectedOutputBlock?.type !== BlockTypeEnum.SCRATCHPAD
       && selectedOutputBlock?.type !== BlockTypeEnum.CHART
       && selectedOutputBlock?.uuid
@@ -624,6 +648,7 @@ function PipelineDetailPage({
           callback: () => {
             setPipelineContentTouched(false);
             fetchPipeline();
+            fetchFileTree();
           },
           onErrorCallback: (response, errors) => setErrors({
             errors,
@@ -639,8 +664,8 @@ function PipelineDetailPage({
     pipeline?: PipelineType | {
       blocks?: BlockType[];
       extensions?: PipelineExtensionsType;
-      name: string;
-      type: string;
+      name?: string;
+      type?: string;
     };
   }, opts?: {
     contentOnly?: boolean;
@@ -667,7 +692,8 @@ function PipelineDetailPage({
     const callbacksByUUID = {};
     const conditionalsByUUID = {};
 
-    blocks.forEach((block: BlockType) => {
+    const blocksFinal = pipelineOverride?.blocks || blocks;
+    blocksFinal.forEach((block: BlockType) => {
       const {
         extension_uuid: extensionUUID,
         type,
@@ -903,11 +929,25 @@ function PipelineDetailPage({
     if (!filePaths.includes(filePathEncoded)) {
       filePaths.push(filePathEncoded);
     }
-    goToWithQuery({
-      file_path: filePathEncoded,
-      'file_paths[]': filePaths,
-    });
+
+
+    const block = getBlockFromFilePath(filePath, blocks);
+
+    if (block) {
+      setSelectedBlock(block);
+      if (blockRefs?.current) {
+        const blockRef = blockRefs.current[`${block.type}s/${block.uuid}.py`];
+        blockRef?.current?.scrollIntoView();
+      }
+    } else {
+      goToWithQuery({
+        file_path: filePathEncoded,
+        'file_paths[]': filePaths,
+      });
+    }
   }, [
+    blockRefs,
+    blocks,
     savePipelineContent,
   ]);
 
@@ -942,7 +982,7 @@ function PipelineDetailPage({
         const { uuid } = resp.data.pipeline;
 
         if (pipelineUUID !== uuid) {
-          window.location.href = `/pipelines/${uuid}/edit`;
+          window.location.href = `${router.basePath}/pipelines/${uuid}/edit`;
         } else {
           fetchFileTree();
           if (type !== pipeline?.type) {
@@ -971,6 +1011,7 @@ function PipelineDetailPage({
     openFile,
     pipeline?.type,
     pipelineUUID,
+    router,
     savePipelineContent,
   ]);
 
@@ -1244,6 +1285,7 @@ function PipelineDetailPage({
         content: blockContent,
         name,
         priority: idx,
+        require_unique_name: true,
         ...block,
       },
     }).then((response: {
@@ -1289,10 +1331,31 @@ function PipelineDetailPage({
               return blocksFinal;
             }));
           },
-          onErrorCallback: (response, errors) => setErrors({
-            errors,
-            response,
-          }),
+          onErrorCallback: (response, errors) => {
+            const exception = response?.error?.exception;
+            const filePath = getRelativePathFromBlock({
+              ...block,
+              name,
+            });
+            if (exception && filePath && exception.startsWith(BLOCK_EXISTS_ERROR)) {
+              setErrors(() => ({
+                errors,
+                links: [{
+                  label: 'View existing block file contents and optionally add to pipeline (if applicable).',
+                  onClick: () => {
+                    openFile(filePath);
+                    setErrors(null);
+                  },
+                }],
+                response,
+              }));
+            } else {
+              setErrors({
+                errors,
+                response,
+              });
+            }
+          },
         },
       );
     });
@@ -1301,48 +1364,117 @@ function PipelineDetailPage({
     fetchFileTree,
     fetchPipeline,
     isIntegration,
+    openFile,
     setBlocks,
     setErrors,
     pipeline,
   ]);
 
-  const [automaticallyNameBlocks, setAutomaticallyNameBlocks] = useState<boolean>(false);
-  useEffect(() => {
-    setAutomaticallyNameBlocks(!!get(LOCAL_STORAGE_KEY_AUTOMATICALLY_NAME_BLOCKS));
-  }, []);
+  // const [automaticallyNameBlocks, setAutomaticallyNameBlocks] = useState<boolean>(false);
+  // useEffect(() => {
+  //   setAutomaticallyNameBlocks(!!get(LOCAL_STORAGE_KEY_AUTOMATICALLY_NAME_BLOCKS));
+  // }, []);
 
   const [showAddBlockModal, hideAddBlockModal] = useModal(({
     block,
     idx,
+    isUpdatingBlock = false,
     name = randomNameGenerator(),
     onCreateCallback,
-  }:{
-    block: BlockRequestPayloadType,
-    idx: number,
-    name: string,
-    onCreateCallback?: (block: BlockType) => void,
+    preventDuplicateBlockName,
+  }: {
+    block: BlockRequestPayloadType;
+    idx?: number;
+    isUpdatingBlock?: boolean;
+    name: string;
+    onCreateCallback?: (block: BlockType) => void;
+    preventDuplicateBlockName?: boolean;
   }) => (
-    <ConfigureBlock
-      block={block}
-      defaultName={name}
-      onClose={hideAddBlockModal}
-      onSave={(opts: {
-        name?: string;
-      } = {}) => addNewBlockAtIndex(
-        block,
-        idx,
-        onCreateCallback,
-        opts?.name,
-      ).then(() => hideAddBlockModal())}
-      pipeline={pipeline}
-    />
+    <ErrorProvider>
+      <ConfigureBlock
+        block={block}
+        defaultName={name}
+        isUpdatingBlock={isUpdatingBlock}
+        onClose={hideAddBlockModal}
+        onSave={(opts: {
+          color?: BlockColorEnum;
+          language?: BlockLanguageEnum;
+          name?: string;
+        } = {}) => {
+          if (isUpdatingBlock) {
+            savePipelineContent({
+              block: {
+                color: opts?.color || null,
+                name: opts?.name,
+                uuid: block.uuid,
+              },
+              pipeline: {
+                blocks: pipeline?.blocks || [],
+              },
+            }).then(() => {
+              setSelectedBlock(null);
+              hideAddBlockModal();
+            });
+          } else {
+            addNewBlockAtIndex(
+              {
+                ...block,
+                ...ignoreKeys(opts, ['name']),
+              },
+              idx,
+              onCreateCallback,
+              opts?.name,
+            ).then(() => hideAddBlockModal());
+          }
+        }
+        }
+        pipeline={pipeline}
+        preventDuplicateBlockName={preventDuplicateBlockName}
+      />
+    </ErrorProvider>
   ), {
   }, [
     addNewBlockAtIndex,
     pipeline,
   ], {
     background: true,
+    disableEscape: true,
     uuid: 'configure_block_name_and_create',
+  });
+
+  const [showConfigureProjectModal, hideConfigureProjectModal] = useModal(({
+    cancelButtonText,
+    header,
+    onCancel,
+    onSaveSuccess,
+  }: {
+    cancelButtonText?: string;
+    header?: any;
+    onCancel?: () => void;
+    onSaveSuccess?: (project: ProjectType) => void;
+  }) => (
+    <ErrorProvider>
+      <Preferences
+        cancelButtonText={cancelButtonText}
+        contained
+        header={header}
+        onCancel={() => {
+          onCancel?.();
+          hideConfigureProjectModal();
+        }}
+        onSaveSuccess={(project: ProjectType) => {
+          fetchProjects();
+          hideConfigureProjectModal();
+          onSaveSuccess?.(project);
+        }}
+      />
+    </ErrorProvider>
+  ), {
+  }, [
+    fetchProjects,
+  ], {
+    background: true,
+    uuid: 'configure_project',
   });
 
   // Widgets
@@ -1845,6 +1977,76 @@ function PipelineDetailPage({
     shouldReconnect: () => true,
   });
 
+  const [showBrowseTemplates, hideBrowseTemplates] = useModal(({
+    addNew,
+    addNewBlock,
+    blockType,
+  }: {
+    addNew?: boolean;
+    addNewBlock?: (block: BlockRequestPayloadType) => Promise<any>,
+    blockType?: BlockTypeEnum;
+    language?: BlockLanguageEnum;
+  }) => (
+    <ErrorProvider>
+      <BrowseTemplates
+        contained
+        defaultLinkUUID={blockType}
+        onClickCustomTemplate={(customTemplate) => {
+          addNewBlock({
+            config: {
+              custom_template: customTemplate,
+              custom_template_uuid: customTemplate?.template_uuid,
+            },
+          });
+          hideBrowseTemplates();
+        }}
+        showAddingNewTemplates={!!addNew}
+        showBreadcrumbs
+        tabs={[NAV_TAB_BLOCKS]}
+      />
+    </ErrorProvider>
+  ), {
+  }, [
+  ], {
+    background: true,
+    uuid: 'browse_templates',
+  });
+
+  const { data: dataGlobalProducts } = api.global_data_products.list();
+  const globalDataProducts: GlobalDataProductType[] =
+    useMemo(() => dataGlobalProducts?.global_data_products || [], [dataGlobalProducts]);
+
+  const [showGlobalDataProducts, hideGlobalDataProducts] = useModal(({
+    addNewBlock,
+  }: {
+    addNewBlock?: (block: BlockRequestPayloadType) => Promise<any>,
+  }) => (
+    <ErrorProvider>
+      <Panel>
+        <GlobalDataProducts
+          globalDataProducts={globalDataProducts}
+          onClickRow={(globalDataProduct: GlobalDataProductType) => {
+            addNewBlock({
+              configuration: {
+                global_data_product: {
+                  uuid: globalDataProduct?.uuid,
+                },
+              },
+              type: BlockTypeEnum.GLOBAL_DATA_PRODUCT,
+            });
+            hideGlobalDataProducts();
+          }}
+        />
+      </Panel>
+    </ErrorProvider>
+  ), {
+  }, [
+    globalDataProducts,
+  ], {
+    background: true,
+    uuid: 'global_data_products',
+  });
+
   const sideKick = useMemo(() => (
     <Sidekick
       activeView={activeSidekickView}
@@ -1870,6 +2072,7 @@ function PipelineDetailPage({
       fetchPipeline={fetchPipeline}
       fetchSecrets={fetchSecrets}
       fetchVariables={fetchVariables}
+      globalDataProducts={globalDataProducts}
       globalVariables={globalVariables}
       insights={insights}
       interruptKernel={interruptKernel}
@@ -1903,6 +2106,17 @@ function PipelineDetailPage({
       setHiddenBlocks={setHiddenBlocks}
       setSelectedBlock={setSelectedBlock}
       setTextareaFocused={setTextareaFocused}
+      showBrowseTemplates={showBrowseTemplates}
+      showUpdateBlockModal={(
+        block,
+        name = randomNameGenerator(),
+        preventDuplicateBlockName,
+      ) => new Promise(() => showAddBlockModal({
+        block,
+        isUpdatingBlock: true,
+        name,
+        preventDuplicateBlockName,
+      }))}
       statistics={statistics}
       textareaFocused={textareaFocused}
       treeRef={treeRef}
@@ -1927,6 +2141,7 @@ function PipelineDetailPage({
     fetchPipeline,
     fetchSecrets,
     fetchVariables,
+    globalDataProducts,
     globalVariables,
     insights,
     interruptKernel,
@@ -1956,6 +2171,7 @@ function PipelineDetailPage({
     setHiddenBlocks,
     setTextareaFocused,
     showAddBlockModal,
+    showBrowseTemplates,
     statistics,
     textareaFocused,
     updatePipelineMetadata,
@@ -1965,17 +2181,35 @@ function PipelineDetailPage({
 
   const pipelineDetailMemo = useMemo(() => (
     <PipelineDetail
-      addNewBlockAtIndex={automaticallyNameBlocks
-        ? addNewBlockAtIndex
-        : (block, idx, onCreateCallback, name) => new Promise((resolve, reject) => {
-            if (BlockTypeEnum.DBT === block?.type && BlockLanguageEnum.SQL === block?.language) {
-              addNewBlockAtIndex(block, idx, onCreateCallback, name);
-            } else {
-              // @ts-ignore
-              showAddBlockModal({ block, idx, name, onCreateCallback });
-            }
-          })
-      }
+      // addNewBlockAtIndex={automaticallyNameBlocks
+      //   ? addNewBlockAtIndex
+      //   : (block, idx, onCreateCallback, name) => new Promise((resolve, reject) => {
+      //       if (BlockTypeEnum.DBT === block?.type && BlockLanguageEnum.SQL === block?.language) {
+      //         addNewBlockAtIndex(block, idx, onCreateCallback, name);
+      //       } else {
+      //         // @ts-ignore
+      //         showAddBlockModal({ block, idx, name, onCreateCallback });
+      //       }
+      //     })
+      // }
+      addNewBlockAtIndex={(
+        block,
+        idx,
+        onCreateCallback,
+        name,
+      ) => new Promise(() => {
+        if (ObjectType.BLOCK_FILE === block?.block_action_object?.object_type
+          || (
+          BlockTypeEnum.DBT === block?.type
+            && BlockLanguageEnum.SQL === block?.language
+            && !block?.block_action_object
+        )) {
+          addNewBlockAtIndex(block, idx, onCreateCallback, name);
+        } else {
+          // @ts-ignore
+          showAddBlockModal({ block, idx, name, onCreateCallback });
+        }
+      })}
       addWidget={(
         widget: BlockType,
         {
@@ -1997,6 +2231,7 @@ function PipelineDetailPage({
       fetchPipeline={fetchPipeline}
       fetchSampleData={fetchSampleData}
       files={files}
+      globalDataProducts={globalDataProducts}
       globalVariables={globalVariables}
       // @ts-ignore
       hiddenBlocks={hiddenBlocks}
@@ -2009,6 +2244,7 @@ function PipelineDetailPage({
       openSidekickView={openSidekickView}
       pipeline={pipeline}
       pipelineContentTouched={pipelineContentTouched}
+      project={project}
       restartKernel={restartKernel}
       runBlock={runBlock}
       runningBlocks={runningBlocks}
@@ -2027,6 +2263,17 @@ function PipelineDetailPage({
       setSelectedOutputBlock={setSelectedOutputBlock}
       setSelectedStream={setSelectedStream}
       setTextareaFocused={setTextareaFocused}
+      showBrowseTemplates={showBrowseTemplates}
+      showConfigureProjectModal={showConfigureProjectModal}
+      showGlobalDataProducts={showGlobalDataProducts}
+      showUpdateBlockModal={(
+        block,
+        name = randomNameGenerator(),
+      ) => new Promise(() => showAddBlockModal({
+        block,
+        isUpdatingBlock: true,
+        name,
+      }))}
       textareaFocused={textareaFocused}
       widgets={widgets}
     />
@@ -2036,7 +2283,7 @@ function PipelineDetailPage({
     allowCodeBlockShortcuts,
     anyInputFocused,
     autocompleteItems,
-    automaticallyNameBlocks,
+    // automaticallyNameBlocks,
     blockRefs,
     blocks,
     blocksInNotebook,
@@ -2047,6 +2294,7 @@ function PipelineDetailPage({
     fetchPipeline,
     fetchSampleData,
     files,
+    globalDataProducts,
     globalVariables,
     hiddenBlocks,
     interruptKernel,
@@ -2058,6 +2306,7 @@ function PipelineDetailPage({
     openSidekickView,
     pipeline,
     pipelineContentTouched,
+    project,
     restartKernel,
     runBlock,
     runningBlocks,
@@ -2071,6 +2320,9 @@ function PipelineDetailPage({
     setSelectedBlock,
     setTextareaFocused,
     showAddBlockModal,
+    showBrowseTemplates,
+    showConfigureProjectModal,
+    showGlobalDataProducts,
     textareaFocused,
     widgets,
   ]);
@@ -2379,7 +2631,7 @@ function PipelineDetailPage({
         beforeHeader={buttonTabs}
         beforeHeightOffset={HEADER_HEIGHT}
         beforeNavigationItems={buildNavigationItems(PageNameEnum.EDIT, pipeline)}
-        errors={errors}
+        errors={pipelineErrors || errors}
         headerOffset={selectedFilePaths?.length > 0 ? 36 : 0}
         mainContainerHeader={mainContainerHeaderMemo}
         mainContainerRef={mainContainerRef}
@@ -2387,7 +2639,7 @@ function PipelineDetailPage({
         pipeline={pipeline}
         setAfterHidden={setAfterHidden}
         setAfterWidthForChildren={setAfterWidthForChildren}
-        setErrors={setErrors}
+        setErrors={pipelineErrors ? setPipelineErrors : setErrors}
         setMainContainerWidth={setMainContainerWidth}
       >
         <div
@@ -2419,7 +2671,10 @@ function PipelineDetailPage({
                   cb: (block: BlockType) => void,
                 ) => {
                   addNewBlockAtIndex(
-                    b,
+                    {
+                      ...b,
+                      require_unique_name: false,
+                    },
                     blocks.length,
                     cb,
                     b.name,

@@ -5,6 +5,7 @@ import { ConfigurationType } from './ChartBlockType';
 import { DataSourceTypeEnum } from './DataSourceType';
 import { DataTypeEnum } from './KernelOutputType';
 import { ExecutorTypeEnum } from '@interfaces/ExecutorType';
+import { getBlockColorHexCodeMapping } from '@components/CodeBlock/utils';
 
 export enum TagEnum {
   CONDITION = 'condition',
@@ -31,6 +32,14 @@ export const ABBREV_BLOCK_LANGUAGE_MAPPING = {
   [BlockLanguageEnum.YAML]: 'YAML',
 };
 
+export const LANGUAGE_DISPLAY_MAPPING = {
+  [BlockLanguageEnum.MARKDOWN]: 'Markdown',
+  [BlockLanguageEnum.PYTHON]: 'Python',
+  [BlockLanguageEnum.R]: 'R',
+  [BlockLanguageEnum.SQL]: 'SQL',
+  [BlockLanguageEnum.YAML]: 'YAML',
+};
+
 export enum BlockTypeEnum {
   CALLBACK = 'callback',
   CHART = 'chart',
@@ -40,6 +49,7 @@ export enum BlockTypeEnum {
   DATA_LOADER = 'data_loader',
   DBT = 'dbt',
   EXTENSION = 'extension',
+  GLOBAL_DATA_PRODUCT = 'global_data_product',
   SCRATCHPAD = 'scratchpad',
   SENSOR = 'sensor',
   MARKDOWN = 'markdown',
@@ -61,8 +71,20 @@ export enum BlockColorEnum {
   YELLOW = 'yellow',
 }
 
+export const BLOCK_COLOR_HEX_CODE_MAPPING = getBlockColorHexCodeMapping();
+
 export const BLOCK_TYPES = [
   BlockTypeEnum.CHART,
+  BlockTypeEnum.CUSTOM,
+  BlockTypeEnum.DATA_EXPORTER,
+  BlockTypeEnum.DATA_LOADER,
+  BlockTypeEnum.SCRATCHPAD,
+  BlockTypeEnum.SENSOR,
+  BlockTypeEnum.MARKDOWN,
+  BlockTypeEnum.TRANSFORMER,
+];
+
+export const DRAGGABLE_BLOCK_TYPES = [
   BlockTypeEnum.CUSTOM,
   BlockTypeEnum.DATA_EXPORTER,
   BlockTypeEnum.DATA_LOADER,
@@ -147,15 +169,43 @@ export interface AnalysisType {
   variable_uuid: string;
 }
 
-export interface BlockRequestPayloadType {
-  color?: BlockColorEnum;
-  config?: {
-    data_source?: DataSourceTypeEnum;
-    action_type?: ActionTypeEnum;
-    axis?: AxisEnum;
-    suggested_action?: SuggestionType;
-    template_path?: string;
+enum ObjectType {
+  BLOCK_FILE = 'block_file',
+  CUSTOM_BLOCK_TEMPLATE = 'custom_block_template',
+  MAGE_TEMPLATE = 'mage_template',
+}
+
+export interface BlockRequestConfigType {
+  action_type?: ActionTypeEnum;
+  axis?: AxisEnum;
+  custom_template?: {
+    block_type?: BlockTypeEnum;
+    description?: string;
+    groups?: string[];
+    language?: string;
+    name?: string;
+    path?: string;
+    template_variables?: {
+      [key: string]: string | number;
+    };
   };
+  custom_template_uuid?: string;
+  data_source?: DataSourceTypeEnum;
+  suggested_action?: SuggestionType;
+  template_path?: string;
+}
+
+export interface BlockRequestPayloadType {
+  block_action_object?: {
+    block_type?: BlockTypeEnum;
+    description?: string;
+    language?: BlockLanguageEnum;
+    object_type: ObjectType;
+    title?: string;
+    uuid: string;
+  };
+  color?: BlockColorEnum;
+  config?: BlockRequestConfigType;
   configuration?: ConfigurationType;
   content?: string;
   converted_from_type?: string;
@@ -165,7 +215,9 @@ export interface BlockRequestPayloadType {
   name?: string;
   priority?: number;
   replicated_block?: string;
+  require_unique_name?: boolean;
   type?: BlockTypeEnum;
+  uuid?: string;
   upstream_blocks?: string[];
 }
 
@@ -194,6 +246,7 @@ export default interface BlockType {
   callback_content?: string;
   conditional_blocks?: string[];
   color?: BlockColorEnum;
+  config?: BlockRequestConfigType;
   configuration?: ConfigurationType;
   content?: string;
   converted_from?: string;
@@ -247,13 +300,17 @@ export const BLOCK_TYPES_WITH_UPSTREAM_INPUTS = [
 
 export const BLOCK_TYPE_NAME_MAPPING = {
   [BlockTypeEnum.CALLBACK]: 'Callback',
+  [BlockTypeEnum.CHART]: 'Chart',
+  [BlockTypeEnum.CONDITIONAL]: 'Conditional',
   [BlockTypeEnum.CUSTOM]: 'Custom',
   [BlockTypeEnum.DATA_EXPORTER]: 'Data exporter',
   [BlockTypeEnum.DATA_LOADER]: 'Data loader',
+  [BlockTypeEnum.DBT]: 'DBT',
   [BlockTypeEnum.EXTENSION]: 'Extension',
+  [BlockTypeEnum.GLOBAL_DATA_PRODUCT]: 'Global data product',
+  [BlockTypeEnum.MARKDOWN]: 'Markdown',
   [BlockTypeEnum.SCRATCHPAD]: 'Scratchpad',
   [BlockTypeEnum.SENSOR]: 'Sensor',
-  [BlockTypeEnum.MARKDOWN]: 'Markdown',
   [BlockTypeEnum.TRANSFORMER]: 'Transformer',
 };
 

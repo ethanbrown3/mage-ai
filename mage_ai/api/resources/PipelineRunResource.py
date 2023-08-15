@@ -6,10 +6,13 @@ from mage_ai.api.utils import get_query_timestamps
 from mage_ai.data_preparation.models.constants import PipelineType
 from mage_ai.data_preparation.models.pipeline import Pipeline
 from mage_ai.orchestration.db import safe_db_query
-from mage_ai.orchestration.db.models.schedules import BlockRun, PipelineRun
+from mage_ai.orchestration.db.models.schedules import (
+    BlockRun,
+    PipelineRun,
+    PipelineSchedule,
+)
 from mage_ai.orchestration.pipeline_scheduler import (
     configure_pipeline_run_payload,
-    start_scheduler,
     stop_pipeline_run,
 )
 
@@ -35,6 +38,10 @@ class PipelineRunResource(DatabaseResource):
         if pipeline_uuid:
             pipeline_uuid = pipeline_uuid[0]
 
+        global_data_product_uuid = query_arg.get('global_data_product_uuid', [None])
+        if global_data_product_uuid:
+            global_data_product_uuid = global_data_product_uuid[0]
+
         status = query_arg.get('status', [None])
         if status:
             status = status[0]
@@ -57,8 +64,16 @@ class PipelineRunResource(DatabaseResource):
             PipelineRun.
             query.
             options(selectinload(PipelineRun.block_runs)).
-            options(selectinload(PipelineRun.pipeline_schedule))
+            options(selectinload(PipelineRun.pipeline_schedule)).
+            join(PipelineSchedule, PipelineRun.pipeline_schedule_id == PipelineSchedule.id)
         )
+
+        if global_data_product_uuid is not None:
+            results = results.filter(
+                PipelineSchedule.global_data_product_uuid == global_data_product_uuid,
+            )
+        else:
+            results = results.filter(PipelineSchedule.global_data_product_uuid.is_(None))
 
         if backfill_id is not None:
             results = results.filter(PipelineRun.backfill_id == int(backfill_id))
@@ -183,12 +198,6 @@ class PipelineRunResource(DatabaseResource):
             pipeline.type,
             payload,
         )
-
-        def _create_callback(resource):
-            pipeline_run = resource.model
-            start_scheduler(pipeline_run)
-
-        self.on_create_callback = _create_callback
 
         return super().create(configured_payload, user, **kwargs)
 

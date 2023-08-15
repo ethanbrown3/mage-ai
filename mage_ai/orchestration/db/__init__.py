@@ -1,8 +1,10 @@
 import logging
 import os
+from urllib.parse import parse_qs, quote_plus, urlparse
 
 import sqlalchemy
 from sqlalchemy import create_engine
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 from mage_ai.data_preparation.repo_manager import get_variables_dir
@@ -50,10 +52,25 @@ if db_connection_url.startswith('postgresql'):
     db_kwargs['pool_size'] = 50
     db_kwargs['connect_args']['options'] = '-c timezone=utc'
 
-engine = create_engine(
-    db_connection_url,
-    **db_kwargs,
-)
+try:
+    engine = create_engine(
+        db_connection_url,
+        **db_kwargs,
+    )
+    engine.connect()
+except SQLAlchemyError:
+    engine.dispose()
+    url_parsed = urlparse(db_connection_url)
+    if url_parsed.password:
+        db_connection_url = db_connection_url.replace(
+            url_parsed.password,
+            quote_plus(url_parsed.password),
+        )
+    engine = create_engine(
+        db_connection_url,
+        **db_kwargs,
+    )
+
 session_factory = sessionmaker(bind=engine)
 
 
@@ -71,7 +88,31 @@ class DBConnection:
         self.session = None
 
 
+def get_postgresql_schema(url):
+    parse_result = urlparse(url)
+    if parse_result.scheme == 'postgresql+psycopg2':
+        q = parse_qs(
+            parse_result.query.replace('%%', '%')
+        )
+        options = q.get('options')
+        if options and len(options) >= 1:
+            params = options[0].replace('-c ', '').split(' ')
+            kvs = dict(p.split('=') for p in params)
+            return kvs.get('search_path')
+
+
 db_connection = DBConnection()
+
+if db_connection_url.startswith('postgresql'):
+    db_schema = get_postgresql_schema(db_connection_url)
+    if db_schema:
+        db_connection.start_session()
+        db_connection.session.execute(f'CREATE SCHEMA IF NOT EXISTS {db_schema};')
+        db_connection.session.commit()
+        db_connection.close_session()
+        print(f'Set the default PostgreSQL schema to {db_schema}')
+    else:
+        print('No schema in PostgreSQL connection URL: use the default "public" schema')
 
 
 def safe_db_query(func):

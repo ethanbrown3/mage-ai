@@ -236,6 +236,7 @@ function KernelStatus({
     kernelPid,
     kernelPidPrevious,
     setRunningBlocks,
+    showKernelWarning,
   ]);
 
   const kernelStatus = useMemo(() => (
@@ -371,6 +372,7 @@ function KernelStatus({
             onClickCallback={() => setShowSelectKernel(false)}
             open={showSelectKernel}
             parentRef={refSelectKernel}
+            rightOffset={0}
             uuid="KernelStatus/select_kernel"
             width={UNIT * 25}
           />
@@ -389,6 +391,7 @@ function KernelStatus({
     showSelectKernel,
     themeContext,
     updateCluster,
+    updatePipelineMetadata,
   ]);
 
   return (

@@ -33,6 +33,7 @@ export const BLOCK_TEMPLATES = 'block_templates';
 export const BLOCK_OUTPUTS = 'block_outputs';
 export const CLUSTERS: 'clusters' = 'clusters';
 export const COLUMNS: 'columns' = 'columns';
+export const CUSTOM_TEMPLATES: 'custom_templates' = 'custom_templates';
 export const DATA_PROVIDERS: 'data_providers' = 'data_providers';
 export const DOWNLOADS: 'downloads' = 'downloads';
 export const EVENT_MATCHERS = 'event_matchers';
@@ -48,12 +49,14 @@ export const FOLDERS: 'folders' = 'folders';
 export const GIT_BRANCHES: 'git_branches' = 'git_branches';
 export const GIT_CUSTOM_BRANCHES: 'git_custom_branches' = 'git_custom_branches';
 export const GIT_FILES: 'git_files' = 'git_files';
+export const GLOBAL_DATA_PRODUCTS: 'global_data_products' = 'global_data_products';
 export const INSTANCES: 'instances' = 'instances';
 export const INTEGRATION_DESTINATIONS: 'integration_destinations' = 'integration_destinations';
 export const INTEGRATION_SAMPLES = 'integration_samples';
 export const INTEGRATION_SOURCES = 'integration_sources';
 export const INTEGRATION_SOURCE_STREAMS = 'integration_source_streams';
 export const KERNELS: 'kernels' = 'kernels';
+export const LLMS = 'llms';
 export const LOGS = 'logs';
 export const MONITOR_STATS = 'monitor_stats';
 export const OAUTHS = 'oauths';
@@ -65,6 +68,7 @@ export const PIPELINE_TRIGGERS: 'pipeline_triggers' = 'pipeline_triggers';
 export const PULL_REQUESTS: 'pull_requests' = 'pull_requests';
 export const PROJECTS: 'projects' = 'projects';
 export const ROLES: 'roles' = 'roles';
+export const SEARCH_RESULTS: 'search_results' = 'search_results';
 export const SECRETS: 'secrets' = 'secrets';
 export const SESSIONS: 'sessions' = 'sessions';
 export const STATUSES: 'statuses' = 'statuses';
@@ -93,6 +97,7 @@ const RESOURCES: any[][] = [
   [BLOCK_OUTPUTS, PIPELINES, DOWNLOADS],
   [CLUSTERS],
   [COLUMNS, FEATURE_SETS],
+  [CUSTOM_TEMPLATES],
   [DATA_PROVIDERS],
   [DOWNLOADS, FEATURE_SETS],
   [EVENT_MATCHERS],
@@ -107,12 +112,14 @@ const RESOURCES: any[][] = [
   [GIT_BRANCHES],
   [GIT_CUSTOM_BRANCHES],
   [GIT_FILES],
+  [GLOBAL_DATA_PRODUCTS],
   [INSTANCES, CLUSTERS],
   [INTEGRATION_DESTINATIONS],
   [INTEGRATION_SAMPLES, INTEGRATION_SOURCES],
   [INTEGRATION_SOURCES],
   [INTEGRATION_SOURCE_STREAMS],
   [KERNELS],
+  [LLMS],
   [LOGS, PIPELINES],
   [MONITOR_STATS],
   [OAUTHS],
@@ -126,6 +133,7 @@ const RESOURCES: any[][] = [
   [PROJECTS],
   [PULL_REQUESTS],
   [ROLES],
+  [SEARCH_RESULTS],
   [SECRETS],
   [SESSIONS],
   [STATUSES],

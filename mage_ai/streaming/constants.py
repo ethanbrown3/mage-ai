@@ -1,6 +1,7 @@
 from enum import Enum
 
 DEFAULT_BATCH_SIZE = 100
+DEFAULT_TIMEOUT_MS = 500
 
 
 class SourceType(str, Enum):
@@ -14,6 +15,7 @@ class SourceType(str, Enum):
 
 class SinkType(str, Enum):
     AMAZON_S3 = 'amazon_s3'
+    AZURE_DATA_LAKE = 'azure_data_lake'
     DUMMY = 'dummy'
     KAFKA = 'kafka'
     KINESIS = 'kinesis'

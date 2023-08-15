@@ -3,16 +3,16 @@ from mage_ai.api.operations import constants
 from mage_ai.api.policies.BasePolicy import BasePolicy
 from mage_ai.api.presenters.PipelineSchedulePresenter import PipelineSchedulePresenter
 from mage_ai.data_preparation.repo_manager import get_project_uuid
-from mage_ai.orchestration.db.models.oauth import Permission
+from mage_ai.orchestration.constants import Entity
 
 
 class PipelineSchedulePolicy(BasePolicy):
     @property
     def entity(self):
         if self.resource and self.resource.model:
-            return Permission.Entity.PIPELINE, self.resource.model.pipeline_uuid
+            return Entity.PIPELINE, self.resource.model.pipeline_uuid
 
-        return Permission.Entity.PROJECT, get_project_uuid()
+        return Entity.PROJECT, get_project_uuid()
 
 
 PipelineSchedulePolicy.allow_actions([
@@ -39,6 +39,7 @@ PipelineSchedulePolicy.allow_read(PipelineSchedulePresenter.default_attributes +
 
 PipelineSchedulePolicy.allow_read(PipelineSchedulePresenter.default_attributes + [
     'event_matchers',
+    'tags',
 ], scopes=[
     OauthScope.CLIENT_PRIVATE,
 ], on_action=[
@@ -47,6 +48,8 @@ PipelineSchedulePolicy.allow_read(PipelineSchedulePresenter.default_attributes +
 
 PipelineSchedulePolicy.allow_read(PipelineSchedulePresenter.default_attributes + [
     'event_matchers',
+    'runtime_average',
+    'tags',
 ], scopes=[
     OauthScope.CLIENT_PRIVATE,
 ], on_action=[
@@ -57,6 +60,7 @@ PipelineSchedulePolicy.allow_read(PipelineSchedulePresenter.default_attributes +
     'event_matchers',
     'last_pipeline_run_status',
     'pipeline_runs_count',
+    'tags',
 ], scopes=[
     OauthScope.CLIENT_PRIVATE,
 ], on_action=[
@@ -88,6 +92,7 @@ PipelineSchedulePolicy.allow_write([
     'sla',
     'start_time',
     'status',
+    'tags',
     'variables',
 ], scopes=[
     OauthScope.CLIENT_PRIVATE,
@@ -96,7 +101,16 @@ PipelineSchedulePolicy.allow_write([
 ], condition=lambda policy: policy.has_at_least_editor_role())
 
 PipelineSchedulePolicy.allow_query([
+    'global_data_product_uuid',
     'order_by',
 ], scopes=[
     OauthScope.CLIENT_PRIVATE,
+], condition=lambda policy: policy.has_at_least_viewer_role())
+
+PipelineSchedulePolicy.allow_query([
+    'tag[]',
+], scopes=[
+    OauthScope.CLIENT_PRIVATE,
+], on_action=[
+    constants.LIST,
 ], condition=lambda policy: policy.has_at_least_viewer_role())

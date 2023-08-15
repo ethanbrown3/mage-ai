@@ -63,9 +63,11 @@ export type TextProps = {
   raw?: boolean;
   rightAligned?: boolean;
   secondary?: boolean;
+  sky?: boolean;
   small?: boolean;
   success?: boolean;
   textOverflow?: boolean;
+  textOverflowLines?: number;
   title?: string;
   underline?: boolean;
   uppercase?: boolean;
@@ -223,6 +225,10 @@ export const SHARED_STYLES = css<TextProps>`
     color: ${(props.theme.content || dark.content).disabled};
   `}
 
+  ${props => props.sky && `
+    color: ${(props.theme || dark).interactive.linkTextLight};
+  `}
+
   ${props => props.black && `
     color: ${(props.theme.monotone || light.monotone).black};
   `}
@@ -299,6 +305,13 @@ export const SHARED_STYLES = css<TextProps>`
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  `}
+
+  ${props => props.textOverflowLines && `
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: ${props.textOverflowLines};
+    display: -webkit-box;
+    overflow: hidden;
   `}
 
   ${props => (props.minWidth || props.maxWidth) && `

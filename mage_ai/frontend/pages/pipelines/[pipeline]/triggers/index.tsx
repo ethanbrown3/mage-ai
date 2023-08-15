@@ -60,7 +60,9 @@ function PipelineSchedules({
 
   const {
     data: dataGlobalVariables,
-  } = api.variables.pipelines.list(pipelineUUID, {}, {
+  } = api.variables.pipelines.list(pipelineUUID, {
+    global_only: true,
+  }, {
     revalidateOnFocus: false,
   });
   const globalVariables = dataGlobalVariables?.variables;
@@ -233,7 +235,7 @@ function PipelineSchedules({
       pageName={PageNameEnum.TRIGGERS}
       pipeline={pipeline}
       setErrors={setErrors}
-      subheaderBackgroundImage="/images/banner-shape-purple-peach.jpg"
+      subheaderBackgroundImage={`${router.basePath}/images/banner-shape-purple-peach.jpg`}
       subheaderButton={
         <KeyboardShortcutButton
           beforeElement={<Add size={2.5 * UNIT} />}

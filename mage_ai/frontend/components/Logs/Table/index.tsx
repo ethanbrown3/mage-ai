@@ -1,7 +1,7 @@
 import Ansi from 'ansi-to-react';
 import NextLink from 'next/link';
 import { FixedSizeList } from 'react-window';
-import { useCallback, useMemo } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 
 import BlockType from '@interfaces/BlockType';
 import Circle from '@oracle/elements/Circle';
@@ -12,12 +12,15 @@ import LogType from '@interfaces/LogType';
 import PipelineType, { PipelineTypeEnum } from '@interfaces/PipelineType';
 import Spacing from '@oracle/elements/Spacing';
 import Text from '@oracle/elements/Text';
+import usePrevious from '@utils/usePrevious';
 
 import { ChevronRight } from '@oracle/icons';
 import { FilterQueryType } from '@components/Logs/Filter';
 import { HEADER_HEIGHT } from '@components/shared/Header/index.style';
 import { LogLevelIndicatorStyle } from '@components/Logs/index.style';
+import { TAB_DETAILS, TAB_ERRORS } from '@components/Logs/Detail';
 import { TableContainer, TableHeadStyle, TableRowStyle } from './index.style';
+import { TabType } from '@oracle/components/Tabs/ButtonTabs';
 import { ThemeType } from '@oracle/styles/themes/constants';
 import { UNIT } from '@oracle/styles/units/spacing';
 import { WIDTH_OF_SINGLE_CHARACTER_MONOSPACE } from '@components/DataTable';
@@ -29,8 +32,11 @@ import { useWindowSize } from '@utils/sizes';
 export const LOG_UUID_PARAM = 'log_uuid';
 
 type LogsTableProps = {
+  autoScrollLogs?: boolean;
   blocksByUUID: { [keyof: string]: BlockType };
+  tableInnerRef: React.RefObject<any>;
   logs: LogType[];
+  onRowClick?: (tab?: TabType) => void;
   pipeline: PipelineType;
   query: FilterQueryType;
   setSelectedLog: (log: LogType) => void;
@@ -38,8 +44,11 @@ type LogsTableProps = {
 };
 
 function LogsTable({
+  autoScrollLogs,
   blocksByUUID,
+  tableInnerRef,
   logs,
+  onRowClick,
   pipeline,
   query,
   setSelectedLog,
@@ -50,6 +59,18 @@ function LogsTable({
     () => PipelineTypeEnum.INTEGRATION === pipeline?.type,
     [pipeline.type],
   );
+
+  const logsPrev = usePrevious(logs);
+  useEffect(() => {
+    if (autoScrollLogs && (logsPrev || []).length !== (logs || []).length) {
+      tableInnerRef?.current?.scrollIntoView(false);
+    }
+  }, [
+    autoScrollLogs,
+    logs,
+    logsPrev,
+    tableInnerRef,
+  ]);
 
   let blockUUIDs = Object.keys(blocksByUUID || {});
   if (isIntegration) {
@@ -88,11 +109,11 @@ function LogsTable({
     },
   ];
 
+
   const renderRow = useCallback(({ data, index, style }) => {
     const {
       blocksByUUID,
       logs,
-      pipeline,
       themeContext,
     } = data;
     const { content, data: logData, name } = logs[index];
@@ -183,6 +204,12 @@ function LogsTable({
             logUUID = null;
           }
 
+          if (log.data?.error) {
+            onRowClick?.(TAB_ERRORS);
+          } else {
+            onRowClick?.(TAB_DETAILS);
+          }
+
           goToWithQuery({ [LOG_UUID_PARAM]: logUUID });
           setSelectedLog(logUUID ? log : null);
         }}
@@ -240,7 +267,13 @@ function LogsTable({
         </Flex>
       </TableRowStyle>
     );
-  }, [blockUUIDColWidth, isIntegration, query, setSelectedLog]);
+  }, [
+    blockUUIDColWidth,
+    isIntegration,
+    onRowClick,
+    query,
+    setSelectedLog,
+  ]);
 
   return (
     <TableContainer>
@@ -271,6 +304,7 @@ function LogsTable({
       <FixedSizeList
         // window height - header - subheader - table header - footer
         height={windowHeight - HEADER_HEIGHT - 86 - 34 - 58}
+        innerRef={tableInnerRef}
         itemCount={logs.length}
         itemData={{
           blocksByUUID,

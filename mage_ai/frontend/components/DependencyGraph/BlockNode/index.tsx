@@ -16,6 +16,7 @@ import {
   CubeWithArrowDown,
   DBT as DBTIcon,
   FrameBoxSelection,
+  HexagonAll,
   Sensor,
   Union,
 } from '@oracle/icons';
@@ -43,6 +44,7 @@ const ICON_MAPPING = {
   [BlockTypeEnum.DATA_EXPORTER]: CircleWithArrowUp,
   [BlockTypeEnum.DATA_LOADER]: CubeWithArrowDown,
   [BlockTypeEnum.DBT]: DBTIcon,
+  [BlockTypeEnum.GLOBAL_DATA_PRODUCT]: HexagonAll,
   [BlockTypeEnum.SENSOR]: Sensor,
   [BlockTypeEnum.TRANSFORMER]: FrameBoxSelection,
 };
@@ -205,7 +207,7 @@ function BlockNode({
             </Flex>
           </Flex>
 
-          <Spacing mr={HEADER_SPACING_HORIZONTAL_UNITS} />
+          <Spacing mr="15px" />
 
           <StatusStyle title={tooltipText}>
             {!hideStatus && (

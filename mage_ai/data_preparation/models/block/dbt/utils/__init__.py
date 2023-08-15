@@ -94,6 +94,7 @@ def parse_attributes(block) -> Dict:
     config = model_config(block.content)
     if config.get('alias'):
         table_name = config['alias']
+    database = config.get('database', None)
 
     full_path = os.path.join(get_repo_path(), 'dbt', file_path)
 
@@ -131,6 +132,7 @@ def parse_attributes(block) -> Dict:
     snapshot = first_folder_name and first_folder_name in snapshot_paths
 
     return dict(
+        database=database,
         dbt_project=dbt_project,
         dbt_project_full_path=dbt_project_full_path,
         file_extension=file_extension,
@@ -176,9 +178,11 @@ def extract_sources(block_content) -> List[Tuple[str, str]]:
 def add_blocks_upstream_from_refs(
     block: 'Block',
     add_current_block: bool = False,
-    downstream_blocks: List['Block'] = [],
+    downstream_blocks: List['Block'] = None,
     read_only: bool = False,
 ) -> None:
+    if downstream_blocks is None:
+        downstream_blocks = []
     attributes_dict = parse_attributes(block)
     models_folder_path = attributes_dict['models_folder_path']
 
@@ -195,7 +199,7 @@ def add_blocks_upstream_from_refs(
 
     current_upstream_blocks = []
     added_blocks = []
-    for idx, ref in enumerate(extract_refs(block.content)):
+    for _, ref in enumerate(extract_refs(block.content)):
         if ref not in files_by_name:
             print(f'WARNING: dbt model {ref} cannot be found.')
             continue
@@ -454,7 +458,11 @@ def get_profile(block, profile_target: str = None) -> Dict:
     return load_profile(profile_name, profiles_full_path, profile_target)
 
 
-def config_file_loader_and_configuration(block, profile_target: str) -> Dict:
+def config_file_loader_and_configuration(
+    block,
+    profile_target: str,
+    **kwargs,
+) -> Dict:
     profile = get_profile(block, profile_target)
 
     if not profile:
@@ -490,12 +498,15 @@ def config_file_loader_and_configuration(block, profile_target: str) -> Dict:
         )
     elif DataSource.BIGQUERY == profile_type:
         keyfile = profile.get('keyfile')
-        database = profile.get('project')
+        database = kwargs.get('database') or profile.get('project')
         schema = profile.get('dataset')
 
-        config_file_loader = ConfigFileLoader(config=dict(
+        config_file_loader_kwargs = dict(
             GOOGLE_SERVICE_ACC_KEY_FILEPATH=keyfile,
-        ))
+        )
+        if profile.get('location'):
+            config_file_loader_kwargs['GOOGLE_LOCATION'] = profile.get('location')
+        config_file_loader = ConfigFileLoader(config=config_file_loader_kwargs)
         configuration = dict(
             data_provider=profile_type,
             data_provider_database=database,
@@ -564,17 +575,18 @@ def config_file_loader_and_configuration(block, profile_target: str) -> Dict:
         schema = profile.get('schema')
         config = dict(
             SNOWFLAKE_ACCOUNT=profile.get('account'),
-            SNOWFLAKE_DEFAULT_DB=profile.get('database'),
-            SNOWFLAKE_DEFAULT_SCHEMA=profile.get('schema'),
+            SNOWFLAKE_DEFAULT_DB=database,
+            SNOWFLAKE_DEFAULT_SCHEMA=schema,
             SNOWFLAKE_DEFAULT_WH=profile.get('warehouse'),
             SNOWFLAKE_USER=profile.get('user'),
+            SNOWFLAKE_ROLE=profile.get('role'),
         )
 
-        if 'password' in profile:
+        if profile.get('password', None):
             config['SNOWFLAKE_PASSWORD'] = profile['password']
-        if 'private_key_passphrase' in profile:
+        if profile.get('private_key_passphrase', None):
             config['SNOWFLAKE_PRIVATE_KEY_PASSPHRASE'] = profile['private_key_passphrase']
-        if 'private_key_path' in profile:
+        if profile.get('private_key_path', None):
             config['SNOWFLAKE_PRIVATE_KEY_PATH'] = profile['private_key_path']
 
         config_file_loader = ConfigFileLoader(config=config)
@@ -804,7 +816,7 @@ def interpolate_input(
 
         return f'{__quoted(schema)}.{__quoted(tn)}'
 
-    for idx, upstream_block in enumerate(block.upstream_blocks):
+    for _, upstream_block in enumerate(block.upstream_blocks):
         if BlockType.DBT != upstream_block.type:
             continue
 
@@ -924,10 +936,12 @@ def execute_query(
     profile_target: str,
     query_string: str,
     limit: int = None,
+    database: str = None,
 ) -> DataFrame:
     config_file_loader, configuration = config_file_loader_and_configuration(
         block,
         profile_target,
+        database=database,
     )
 
     data_provider = configuration['data_provider']
@@ -1187,10 +1201,15 @@ def create_temporary_profile(project_full_path: str, profiles_dir: str) -> Tuple
 def run_dbt_tests(
     block,
     build_block_output_stdout: Callable[..., object] = None,
-    global_vars: Dict = {},
+    global_vars: Dict = None,
     logger: Logger = None,
-    logging_tags: Dict = dict(),
+    logging_tags: Dict = None,
 ) -> None:
+    if global_vars is None:
+        global_vars = {}
+    if logging_tags is None:
+        logging_tags = {}
+
     if block.configuration.get('file_path') is not None:
         attributes_dict = parse_attributes(block)
         snapshot = attributes_dict['snapshot']
@@ -1227,7 +1246,7 @@ def run_dbt_tests(
 
     with redirect_stdout(stdout):
         lines = proc1.stdout.decode().split('\n')
-        for idx, line in enumerate(lines):
+        for _, line in enumerate(lines):
             print(line)
 
             match = re.search('ERROR=([0-9]+)', line)
@@ -1296,12 +1315,15 @@ def fetch_model_data(
     # If the model SQL file contains a config with schema, change the schema to use that.
     # https://docs.getdbt.com/reference/resource-configs/schema
     config = model_config(block.content)
+    config_database = config.get('database')
     config_schema = config.get('schema')
+
+    # settings from the dbt_project.yml
+    model_configurations = get_model_configurations_from_dbt_project_settings(block)
+
     if config_schema:
         schema = f'{schema}_{config_schema}'
     else:
-        # settings from the dbt_project.yml
-        model_configurations = get_model_configurations_from_dbt_project_settings(block)
         model_configuration_schema = None
         if model_configurations:
             model_configuration_schema = (model_configurations.get('schema') or
@@ -1310,9 +1332,22 @@ def fetch_model_data(
         if model_configuration_schema:
             schema = f"{schema}_{model_configuration_schema}"
 
+    database = None
+    if config_database:
+        database = config_database
+    elif model_configurations:
+        database = (model_configurations.get('database') or
+                    model_configurations.get('+database'))
+
     query_string = f'SELECT * FROM {schema}.{table_name}'
 
-    return execute_query(block, profile_target, query_string, limit)
+    return execute_query(
+        block,
+        profile_target,
+        query_string,
+        limit,
+        database=database,
+    )
 
 
 def upstream_blocks_from_sources(block: Block) -> List[Block]:

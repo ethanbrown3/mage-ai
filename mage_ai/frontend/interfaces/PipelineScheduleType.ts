@@ -40,8 +40,9 @@ export enum SortQueryParamEnum {
 }
 
 export interface PipelineScheduleSettingsType {
-  skip_if_previous_running?: boolean;
   allow_blocks_to_fail?: boolean;
+  landing_time_enabled?: boolean;
+  skip_if_previous_running?: boolean;
 }
 
 export const SORT_QUERY_TO_COLUMN_NAME_MAPPING = {
@@ -61,17 +62,20 @@ export interface PipelineScheduleReqQueryParamsType {
 export default interface PipelineScheduleType {
   created_at?: string;
   event_matchers?: EventMatcherType[];
+  global_data_product_uuid?: string;
   id?: string;
   last_pipeline_run_status?: RunStatusEnum;
   name?: string;
   pipeline_runs_count?: number;
   pipeline_uuid?: string;
+  runtime_average?: number;
   schedule_interval?: string;
   schedule_type?: ScheduleTypeEnum;
   settings?: PipelineScheduleSettingsType;
   sla?: number;
   start_time?: string;
   status?: ScheduleStatusEnum;
+  tags?: string[];
   token?: string;
   updated_at?: string;
   variables?: {

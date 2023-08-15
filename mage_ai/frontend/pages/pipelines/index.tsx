@@ -3,14 +3,15 @@ import { MutateFunction, useMutation } from 'react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 
+import BrowseTemplates from '@components/CustomTemplates/BrowseTemplates';
 import Button from '@oracle/elements/Button';
 import Chip from '@oracle/components/Chip';
 import Dashboard from '@components/Dashboard';
 import ErrorsType from '@interfaces/ErrorsType';
 import Flex from '@oracle/components/Flex';
 import FlexContainer from '@oracle/components/FlexContainer';
-import InputModal from '@oracle/elements/Inputs/InputModal';
 import Headline from '@oracle/elements/Headline';
+import InputModal from '@oracle/elements/Inputs/InputModal';
 import Link from '@oracle/elements/Link';
 import Panel from '@oracle/components/Panel';
 import PipelineType, {
@@ -32,22 +33,33 @@ import ToggleSwitch from '@oracle/elements/Inputs/ToggleSwitch';
 import Toolbar from '@components/shared/Table/Toolbar';
 import api from '@api';
 import dark from '@oracle/styles/themes/dark';
+import { BORDER_RADIUS_SMALL } from '@oracle/styles/units/borders';
 import { BlockTypeEnum } from '@interfaces/BlockType';
 import { Check, Circle, Clone, File, Open, Pause, PlayButtonFilled, Secrets } from '@oracle/icons';
-import { ScheduleStatusEnum } from '@interfaces/PipelineScheduleType';
-import { BORDER_RADIUS_SMALL } from '@oracle/styles/units/borders';
+import { ErrorProvider } from '@context/Error';
+import { GlobalDataProductObjectTypeEnum } from '@interfaces/GlobalDataProductType';
 import { HEADER_HEIGHT } from '@components/shared/Header/index.style';
-import { TableContainerStyle } from '@components/shared/Table/index.style';
+import { NAV_TAB_PIPELINES } from '@components/CustomTemplates/BrowseTemplates/constants';
+import { OBJECT_TYPE_PIPELINES } from '@interfaces/CustomTemplateType';
 import { PADDING_UNITS, UNIT } from '@oracle/styles/units/spacing';
-import { capitalize, capitalizeRemoveUnderscoreLower } from '@utils/string';
+import { ScheduleStatusEnum } from '@interfaces/PipelineScheduleType';
+import { TableContainerStyle } from '@components/shared/Table/index.style';
+import { capitalize, capitalizeRemoveUnderscoreLower, randomNameGenerator } from '@utils/string';
 import { displayErrorFromReadResponse, onSuccess } from '@api/utils/response';
 import { filterQuery, queryFromUrl } from '@utils/url';
+import {
+  getFilters,
+  getGroupBys,
+  setFilters,
+  setGroupBys,
+} from '@storage/pipelines';
 import { getNewPipelineButtonMenuItems } from '@components/Dashboard/utils';
 import { goToWithQuery } from '@utils/routing';
+import { isEmptyObject } from '@utils/hash';
 import { pauseEvent } from '@utils/events';
 import { sortByKey } from '@utils/array';
-import { useModal } from '@context/Modal';
 import { useError } from '@context/Error';
+import { useModal } from '@context/Modal';
 
 const sharedOpenButtonProps = {
   borderRadius: BORDER_RADIUS_SMALL,
@@ -75,7 +87,6 @@ function PipelineListPage() {
     PipelineQueryEnum.TAG,
     PipelineQueryEnum.TYPE,
   ]);
-  const groupByQuery = q?.[PipelineQueryEnum.GROUP];
   const { data, mutate: fetchPipelines } = api.pipelines.list({
     ...query,
     include_schedules: 1,
@@ -96,6 +107,83 @@ function PipelineListPage() {
 
   const { data: dataProjects, mutate: fetchProjects } = api.projects.list();
   const project: ProjectType = useMemo(() => dataProjects?.projects?.[0], [dataProjects]);
+
+  const groupByQuery = q?.[PipelineQueryEnum.GROUP];
+
+  useEffect(() => {
+    let queryFinal = {};
+
+    if (groupByQuery) {
+      setGroupBys({
+        [groupByQuery]: true,
+      });
+    } else {
+      let val;
+      const groupBys = getGroupBys();
+      if (groupBys) {
+        Object.entries(groupBys).forEach(([k, v]) => {
+          if (!val && v) {
+            val = k;
+          }
+        });
+      }
+
+      if (val) {
+        queryFinal[PipelineQueryEnum.GROUP] = val;
+      }
+    }
+
+    if (isEmptyObject(query)) {
+      const filtersQuery = {};
+      const f = getFilters();
+
+      if (f) {
+        Object.entries(f).forEach(([k, v]) => {
+          filtersQuery[k] = [];
+
+          Object.entries(v).forEach(([k2, v2]) => {
+            if (v2) {
+              filtersQuery[k].push(k2);
+            }
+          });
+        });
+      }
+
+      if (!isEmptyObject(filtersQuery)) {
+        queryFinal = {
+          ...queryFinal,
+          ...filtersQuery,
+        };
+      }
+    } else {
+      const f = {};
+      Object.entries(query).forEach(([k, v]) => {
+        f[k] = {};
+
+        let v2 = v;
+        if (!Array.isArray(v2)) {
+          v2 = [v2];
+        }
+
+        if (v2 && Array.isArray(v2)) {
+          v2?.forEach((v3) => {
+            f[k][v3] = true;
+          });
+        }
+      });
+
+      setFilters(f);
+    }
+
+    if (!isEmptyObject(queryFinal)) {
+      goToWithQuery(queryFinal, {
+        pushHistory: false,
+      });
+    }
+  }, [
+    groupByQuery,
+    query,
+  ]);
 
   useEffect(() => {
     displayErrorFromReadResponse(data, setErrors);
@@ -235,8 +323,39 @@ function PipelineListPage() {
     uuid: 'rename_pipeline_and_save',
   });
 
-  const newPipelineButtonMenuItems = useMemo(() => getNewPipelineButtonMenuItems(createPipeline), [
+  const [showBrowseTemplates, hideBrowseTemplates] = useModal(() => (
+    <ErrorProvider>
+      <BrowseTemplates
+        contained
+        onClickCustomTemplate={(customTemplate) => {
+          createPipeline({
+            pipeline: {
+              custom_template_uuid: customTemplate?.template_uuid,
+              name: randomNameGenerator(),
+            },
+          }).then(() => {
+            hideBrowseTemplates();
+          });
+        }}
+        showBreadcrumbs
+        tabs={[NAV_TAB_PIPELINES]}
+      />
+    </ErrorProvider>
+  ), {
+  }, [
+  ], {
+    background: true,
+    uuid: 'browse_templates',
+  });
+
+  const newPipelineButtonMenuItems = useMemo(() => getNewPipelineButtonMenuItems(
     createPipeline,
+    {
+      showBrowseTemplates,
+    },
+  ), [
+    createPipeline,
+    showBrowseTemplates,
   ]);
 
   const { data: dataTags } = api.tags.list();
@@ -290,13 +409,21 @@ function PipelineListPage() {
               : <Circle muted size={UNIT * 1.5} />
             ,
             label: () => capitalize(PipelineGroupingEnum.STATUS),
-            onClick: () => goToWithQuery({
-              [PipelineQueryEnum.GROUP]: groupByQuery === PipelineGroupingEnum.STATUS
+            onClick: () => {
+              const val = groupByQuery === PipelineGroupingEnum.STATUS
                 ? null
-                : PipelineGroupingEnum.STATUS,
-            }, {
-              pushHistory: true,
-            }),
+                : PipelineGroupingEnum.STATUS;
+
+               if (!val) {
+                 setGroupBys({});
+               }
+
+              goToWithQuery({
+                [PipelineQueryEnum.GROUP]: val,
+              }, {
+                pushHistory: true,
+              });
+            },
             uuid: 'Pipelines/GroupMenu/Status',
           },
           {
@@ -308,13 +435,21 @@ function PipelineListPage() {
               : <Circle muted size={UNIT * 1.5} />
             ,
             label: () => capitalize(PipelineGroupingEnum.TAG),
-            onClick: () => goToWithQuery({
-              [PipelineQueryEnum.GROUP]: groupByQuery === PipelineGroupingEnum.TAG
+            onClick: () => {
+              const val = groupByQuery === PipelineGroupingEnum.TAG
                 ? null
-                : PipelineGroupingEnum.TAG,
-            }, {
-              pushHistory: true,
-            }),
+                : PipelineGroupingEnum.TAG;
+
+               if (!val) {
+                 setGroupBys({});
+               }
+
+              goToWithQuery({
+                [PipelineQueryEnum.GROUP]: val,
+              }, {
+                pushHistory: true,
+              });
+            },
             uuid: 'Pipelines/GroupMenu/Tag',
           },
           {
@@ -326,13 +461,21 @@ function PipelineListPage() {
               : <Circle muted size={UNIT * 1.5} />
             ,
             label: () => capitalize(PipelineGroupingEnum.TYPE),
-            onClick: () => goToWithQuery({
-              [PipelineQueryEnum.GROUP]: groupByQuery === PipelineGroupingEnum.TYPE
+            onClick: () => {
+              const val = groupByQuery === PipelineGroupingEnum.TYPE
                 ? null
-                : PipelineGroupingEnum.TYPE,
-            }, {
-              pushHistory: true,
-            }),
+                : PipelineGroupingEnum.TYPE;
+
+               if (!val) {
+                 setGroupBys({});
+               }
+
+              goToWithQuery({
+                [PipelineQueryEnum.GROUP]: val,
+              }, {
+                pushHistory: true,
+              });
+            },
             uuid: 'Pipelines/GroupMenu/Type',
           },
         ],
@@ -349,6 +492,12 @@ function PipelineListPage() {
           uuid: 'Pipelines/MoreActionsMenu/EditDescription',
         },
       ]}
+      onFilterApply={(query, updatedQuery) => {
+        // @ts-ignore
+        if (Object.values(updatedQuery).every(arr => !arr?.length)) {
+          setFilters({});
+        }
+      }}
       query={query}
       searchProps={{
         onChange: setSearchText,
@@ -654,7 +803,7 @@ function PipelineListPage() {
             maxHeight={`calc(100vh - ${HEADER_HEIGHT + 74}px)`}
           >
             <Table
-              columnFlex={[null, null, null, 2, null, 1, null, null, null]}
+              columnFlex={[null, null, null, 2, null, null, 1, null, null, null]}
               columns={[
                 {
                   label: () => '',
@@ -671,6 +820,9 @@ function PipelineListPage() {
                 },
                 {
                   uuid: capitalize(PipelineGroupingEnum.TYPE),
+                },
+                {
+                  uuid: 'Updated at',
                 },
                 {
                   uuid: 'Tags',
@@ -740,6 +892,24 @@ function PipelineListPage() {
                     uuid: 'add_tags',
                   },
                   {
+                    label: () => 'Create template',
+                    onClick: () => {
+                      router.push(
+                        `/templates?object_type=${OBJECT_TYPE_PIPELINES}&new=1&pipeline_uuid=${selectedPipeline?.uuid}`,
+                      );
+                    },
+                    uuid: 'create_custom_template',
+                  },
+                  {
+                    label: () => 'Create global data product',
+                    onClick: () => {
+                      router.push(
+                        `/global-data-products?object_type=${GlobalDataProductObjectTypeEnum.PIPELINE}&new=1&object_uuid=${selectedPipeline?.uuid}`,
+                      );
+                    },
+                    uuid: 'create_global_data_product',
+                  },
+                  {
                     label: () => 'Delete',
                     onClick: () => {
                       if (typeof window !== 'undefined'
@@ -754,6 +924,7 @@ function PipelineListPage() {
                   },
                 ];
               }}
+              rightClickMenuWidth={UNIT * 25}
               rowGroupHeaders={rowGroupHeaders}
               rows={pipelines.map((pipeline, idx) => {
                 const {
@@ -762,6 +933,7 @@ function PipelineListPage() {
                   schedules,
                   tags,
                   type,
+                  updated_at: updatedAt,
                   uuid,
                 } = pipeline;
                 const blocksCount = blocks.filter(({ type }) => BlockTypeEnum.SCRATCHPAD !== type).length;
@@ -840,6 +1012,14 @@ function PipelineListPage() {
                     key={`pipeline_type_${idx}`}
                   >
                     {PIPELINE_TYPE_LABEL_MAPPING[type]}
+                  </Text>,
+                  <Text
+                    key={`pipeline_updated_at_${idx}`}
+                    monospace
+                    small
+                    title={updatedAt}
+                  >
+                    {updatedAt ? updatedAt.slice(0, -3) : <>&#8212;</>}
                   </Text>,
                   tagsEl,
                   <Text

@@ -6,6 +6,8 @@ from mage_ai.shared.hash import merge_dict
 
 
 class EcsBlockExecutor(BlockExecutor):
+    RETRYABLE = False
+
     def __init__(self, pipeline, block_uuid: str, execution_partition: str = None):
         super().__init__(pipeline, block_uuid, execution_partition=execution_partition)
         self.executor_config = self.pipeline.repo_config.ecs_config or dict()
@@ -18,5 +20,9 @@ class EcsBlockExecutor(BlockExecutor):
         global_vars: Dict = None,
         **kwargs,
     ) -> None:
-        cmd = self._run_commands(block_run_id, global_vars, **kwargs)
+        cmd = self._run_commands(
+            block_run_id=block_run_id,
+            global_vars=global_vars,
+            **kwargs,
+        )
         ecs.run_task(' '.join(cmd), ecs_config=self.executor_config)

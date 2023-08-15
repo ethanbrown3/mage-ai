@@ -1,3 +1,4 @@
+import NextLink from 'next/link';
 import React, {
   useCallback,
   useContext,
@@ -46,13 +47,14 @@ import ErrorsType from '@interfaces/ErrorsType';
 import Flex from '@oracle/components/Flex';
 import FlexContainer from '@oracle/components/FlexContainer';
 import FlyoutMenuWrapper from '@oracle/components/FlyoutMenu/FlyoutMenuWrapper';
+import GlobalDataProductType from '@interfaces/GlobalDataProductType';
 import KernelOutputType, {
   ExecutionStateEnum,
 } from '@interfaces/KernelOutputType';
-import LabelWithValueClicker from '@oracle/components/LabelWithValueClicker';
 import Link from '@oracle/elements/Link';
 import Markdown from '@oracle/components/Markdown';
 import PipelineType, { PipelineTypeEnum } from '@interfaces/PipelineType';
+import ProjectType from '@interfaces/ProjectType';
 import Select from '@oracle/elements/Inputs/Select';
 import Spacing from '@oracle/elements/Spacing';
 import Text from '@oracle/elements/Text';
@@ -62,10 +64,12 @@ import UpstreamBlockSettings from './UpstreamBlockSettings';
 import api from '@api';
 import buildAutocompleteProvider from '@components/CodeEditor/autocomplete';
 import usePrevious from '@utils/usePrevious';
+
 import {
   ArrowDown,
   ChevronDown,
   ChevronUp,
+  DiamondShared,
   FileFill,
   Info,
   ParentEmpty,
@@ -124,9 +128,9 @@ import {
 } from './utils';
 import { capitalize, pluralize } from '@utils/string';
 import { executeCode } from '@components/CodeEditor/keyboard_shortcuts/shortcuts';
+import { find, indexBy } from '@utils/array';
 import { get, set } from '@storage/localStorage';
 import { getModelName } from '@utils/models/dbt';
-import { indexBy } from '@utils/array';
 import { initializeContentAndMessages } from '@components/PipelineDetail/utils';
 import { onError, onSuccess } from '@api/utils/response';
 import { onlyKeysPresent } from '@utils/hooks/keyboardShortcuts/utils';
@@ -142,7 +146,7 @@ type CodeBlockProps = {
   addNewBlockMenuOpenIdx?: number;
   allBlocks: BlockType[];
   allowCodeBlockShortcuts?: boolean;
-  autocompleteItems: AutocompleteItemType[];
+  autocompleteItems?: AutocompleteItemType[];
   block: BlockType;
   blockIdx: number;
   blockRefs: any;
@@ -150,11 +154,16 @@ type CodeBlockProps = {
   blocks: BlockType[];
   dataProviders?: DataProviderType[];
   defaultValue?: string;
+  disableDrag?: boolean;
   disableShortcuts?: boolean;
   executionState: ExecutionStateEnum;
   extraContent?: any;
   fetchFileTree: () => void;
   fetchPipeline: () => void;
+  globalDataProducts?: GlobalDataProductType[];
+  hideExtraCommandButtons?: boolean;
+  hideExtraConfiguration?: boolean;
+  hideHeaderInteractiveInformation?: boolean;
   hideRunButton?: boolean;
   mainContainerRef?: any;
   mainContainerWidth?: number;
@@ -168,7 +177,8 @@ type CodeBlockProps = {
     blockUUID: string;
   }) => void;
   pipeline: PipelineType;
-  runBlock: (payload: {
+  project?: ProjectType;
+  runBlock?: (payload: {
     block: BlockType;
     code: string;
     runDownstream?: boolean;
@@ -191,6 +201,24 @@ type CodeBlockProps = {
   setOutputBlocks?: (func: (prevOutputBlocks: BlockType[]) => BlockType[]) => void;
   setSelectedBlock?: (block: BlockType) => void;
   setSelectedOutputBlock?: (block: BlockType) => void;
+  showBrowseTemplates?: (opts?: {
+    addNew?: boolean;
+    blockType?: BlockTypeEnum;
+    language?: BlockLanguageEnum;
+  }) => void;
+  showConfigureProjectModal?: (opts: {
+    cancelButtonText?: string;
+    header?: any;
+    onCancel?: () => void;
+    onSaveSuccess?: (project: ProjectType) => void;
+  }) => void;
+  showGlobalDataProducts?: (opts?: {
+    addNewBlock?: (block: BlockRequestPayloadType) => Promise<any>;
+  }) => void;
+  showUpdateBlockModal?: (
+    block: BlockType,
+    name: string,
+  ) => void;
   widgets?: BlockType[];
 } & CodeEditorSharedProps & CommandButtonsSharedProps & SetEditingBlockType;
 
@@ -205,16 +233,21 @@ function CodeBlock({
   blockIdx,
   blockRefs,
   blockTemplates,
-  blocks,
+  blocks = [],
   dataProviders,
   defaultValue = '',
   deleteBlock,
+  disableDrag,
   disableShortcuts,
   executionState,
   extraContent,
   fetchFileTree,
   fetchPipeline,
+  globalDataProducts,
   height,
+  hideExtraCommandButtons,
+  hideExtraConfiguration,
+  hideHeaderInteractiveInformation,
   hideRunButton,
   interruptKernel,
   mainContainerRef,
@@ -227,6 +260,7 @@ function CodeBlock({
   onDrop,
   openSidekickView,
   pipeline,
+  project,
   runBlock,
   runningBlocks,
   savePipelineContent,
@@ -241,6 +275,10 @@ function CodeBlock({
   setSelectedBlock,
   setSelectedOutputBlock,
   setTextareaFocused,
+  showBrowseTemplates,
+  showConfigureProjectModal,
+  showGlobalDataProducts,
+  showUpdateBlockModal,
   textareaFocused,
   widgets,
 }: CodeBlockProps, ref) {
@@ -253,6 +291,7 @@ function CodeBlock({
     error: blockError,
     has_callback: hasCallback,
     language: blockLanguage,
+    name: blockName,
     pipelines,
     replicated_block: replicatedBlockUUID,
     type: blockType,
@@ -260,7 +299,13 @@ function CodeBlock({
     uuid: blockUUID,
   } = block || {};
   const blockConfiguration = useMemo(() => blockConfig, [blockConfig]);
-  const blockPipelinesLength = useMemo(() => Object.values(pipelines || {})?.length || 1, [pipeline]);
+  const blockPipelinesLength = useMemo(() => Object.values(pipelines || {})?.length || 1, [
+    pipelines,
+  ]);
+  const globalDataProduct =
+    useMemo(() => blockConfiguration?.global_data_product, [blockConfiguration]);
+  const globalDataProductsByUUID =
+    useMemo(() => indexBy(globalDataProducts || [], ({ uuid }) => uuid), [globalDataProducts]);
 
   const [addNewBlocksVisible, setAddNewBlocksVisible] = useState(false);
   const [autocompleteProviders, setAutocompleteProviders] = useState(null);
@@ -291,6 +336,7 @@ function CodeBlock({
     [CONFIG_KEY_DATA_PROVIDER_PROFILE]: blockConfiguration[CONFIG_KEY_DATA_PROVIDER_PROFILE],
     [CONFIG_KEY_DATA_PROVIDER_SCHEMA]: blockConfiguration[CONFIG_KEY_DATA_PROVIDER_SCHEMA],
     [CONFIG_KEY_DATA_PROVIDER_TABLE]: blockConfiguration[CONFIG_KEY_DATA_PROVIDER_TABLE],
+    [CONFIG_KEY_DBT]: blockConfiguration[CONFIG_KEY_DBT] || {},
     [CONFIG_KEY_DBT_PROFILE_TARGET]: blockConfiguration[CONFIG_KEY_DBT_PROFILE_TARGET],
     [CONFIG_KEY_DBT_PROJECT_NAME]: blockConfiguration[CONFIG_KEY_DBT_PROJECT_NAME],
     [CONFIG_KEY_EXPORT_WRITE_POLICY]: blockConfiguration[CONFIG_KEY_EXPORT_WRITE_POLICY]
@@ -298,13 +344,10 @@ function CodeBlock({
     [CONFIG_KEY_LIMIT]: defaultLimitValue,
     [CONFIG_KEY_UNIQUE_UPSTREAM_TABLE_NAME]: blockConfiguration[CONFIG_KEY_UNIQUE_UPSTREAM_TABLE_NAME],
     [CONFIG_KEY_USE_RAW_SQL]: !!blockConfiguration[CONFIG_KEY_USE_RAW_SQL],
-    [CONFIG_KEY_DBT]: blockConfiguration[CONFIG_KEY_DBT] || {},
   });
 
   const [errorMessages, setErrorMessages] = useState(null);
   const [isEditingBlock, setIsEditingBlock] = useState<boolean>(isMarkdown);
-  const [isEditingBlockName, setIsEditingBlockName] = useState<boolean>(false);
-  const [newBlockUuid, setNewBlockUuid] = useState(blockUUID);
   const [outputCollapsed, setOutputCollapsed] = useState(false);
   const [runCount, setRunCount] = useState<number>(0);
   const [runEndTime, setRunEndTime] = useState<number>(null);
@@ -343,6 +386,11 @@ function CodeBlock({
   const dbtProfileTarget = useMemo(() => dataProviderConfig[CONFIG_KEY_DBT_PROFILE_TARGET], [
     dataProviderConfig,
   ]);
+  const dbtProfileTargetSelectPlaceholder = dbtProjectName
+    ? (dbtProfileData?.target
+      ? find(dbtProfileTargets, (target: string) => target === dbtProfileData.target)
+      : 'Select target')
+    : 'Select project first';
 
   const [manuallyEnterTarget, setManuallyEnterTarget] = useState<boolean>(dbtProfileTarget &&
     !dbtProfileTargets?.includes(dbtProfileTarget),
@@ -465,7 +513,7 @@ function CodeBlock({
       setSelectedTab(TAB_DBT_LOGS_UUID);
     }
 
-    runBlock({
+    runBlock?.({
       block: blockPayload,
       code: code || content,
       runDownstream: runDownstream || hasDownstreamWidgets,
@@ -631,7 +679,6 @@ function CodeBlock({
         response,
         {
           callback: (resp) => {
-            setIsEditingBlockName(false);
             fetchPipeline();
             fetchFileTree();
             setContent(content);
@@ -661,27 +708,12 @@ function CodeBlock({
 
   registerOnKeyDown(
     uuidKeyboard,
-    (event, keyMapping, keyHistory) => {
+    (event, keyMapping) => {
       if (disableShortcuts && !allowCodeBlockShortcuts) {
         return;
       }
 
-      if (isEditingBlockName
-        && String(keyHistory[0]) === String(KEY_CODE_ENTER)
-        && String(keyHistory[1]) !== String(KEY_CODE_META)
-      ) {
-        if (blockUUID === newBlockUuid) {
-          event.target.blur();
-        } else {
-          // @ts-ignore
-          updateBlock({
-            block: {
-              ...block,
-              name: newBlockUuid,
-            },
-          });
-        }
-      } else if (selected && !hideRunButton) {
+      if (selected && !hideRunButton) {
         if (onlyKeysPresent([KEY_CODE_META, KEY_CODE_ENTER], keyMapping)
           || onlyKeysPresent([KEY_CODE_CONTROL, KEY_CODE_ENTER], keyMapping)
         ) {
@@ -701,8 +733,6 @@ function CodeBlock({
       addNewBlock,
       block,
       hideRunButton,
-      isEditingBlockName,
-      newBlockUuid,
       runBlockAndTrack,
       selected,
       updateBlock,
@@ -721,7 +751,6 @@ function CodeBlock({
 
     return () => clearInterval(interval);
   }, [currentTime, isInProgress, runStartTime]);
-
 
   const buildBlockMenu = useCallback((b: BlockType) => {
     const blockMenuItems = {
@@ -773,6 +802,7 @@ function CodeBlock({
     addNewBlock,
     blocks,
     savePipelineContent,
+    updateBlock,
   ]);
 
   const replicatedBlock =
@@ -781,82 +811,135 @@ function CodeBlock({
       replicatedBlockUUID,
     ]);
 
-  const codeEditorEl = useMemo(() => !replicatedBlockUUID && (
-    <>
-      <CodeEditor
-        autoHeight
-        autocompleteProviders={autocompleteProviders}
-        block={block}
-        height={height}
-        language={blockLanguage}
-        onChange={(val: string) => {
-          setContent(val);
-          onChange?.(val);
-        }}
-        onDidChangeCursorPosition={onDidChangeCursorPosition}
-        placeholder={BlockTypeEnum.DBT === blockType && BlockLanguageEnum.YAML === blockLanguage
-          ? `e.g. --select ${dbtProjectName || 'project'}/models --exclude ${dbtProjectName || 'project'}/models/some_dir`
-          : 'Start typing here...'
-        }
-        selected={selected}
-        setSelected={setSelected}
-        setTextareaFocused={setTextareaFocused}
-        shortcuts={hideRunButton
-          ? []
-          : [
-            (monaco, editor) => executeCode(monaco, () => {
-              if (!hideRunButton) {
-                runBlockAndTrack({
-                  /*
-                  * This block doesn't get updated when the upstream dependencies change,
-                  * so we need to update the shortcuts in the CodeEditor component.
-                  */
-                  block,
-                  code: editor.getValue(),
-                });
-              }
-            }),
-          ]
-        }
-        textareaFocused={textareaFocused}
-        value={content}
-        width="100%"
-      />
-      {hasCallback && (
-        <>
-          <Divider />
-          <Spacing mt={1}>
-            <CodeHelperStyle normalPadding>
-              <Text small>
-                Callback block: define @on_success or @on_failure callbacks for this block.
-              </Text>
-              <Text monospace muted small>
-                kwargs<Text inline monospace muted small> → </Text>
-                global variables
-              </Text>
-            </CodeHelperStyle>
-            <CodeEditor
-              autoHeight
-              autocompleteProviders={autocompleteProviders}
-              language="python"
-              onChange={(val: string) => {
-                setCallbackContent(val);
-                onCallbackChange?.(val);
-              }}
-              onDidChangeCursorPosition={onDidChangeCursorPosition}
-              placeholder="Start typing here..."
-              selected={selected}
-              setSelected={setSelected}
-              setTextareaFocused={setTextareaFocused}
-              textareaFocused={textareaFocused}
-              value={callbackContent}
-              width="100%"
-            />
+  const codeEditorEl = useMemo(() => {
+    if (replicatedBlockUUID) {
+      return null;
+    }
+
+    if (BlockTypeEnum.GLOBAL_DATA_PRODUCT === blockType) {
+      const gdp = globalDataProductsByUUID?.[globalDataProduct?.uuid];
+
+      return (
+        <CodeHelperStyle>
+          <Spacing mb={PADDING_UNITS} mt={1}>
+            <Text monospace muted small>
+              UUID
+            </Text>
+            <Text monospace>
+              {gdp?.uuid}
+            </Text>
           </Spacing>
-        </>
-      )}
-    </>
-  ), [
+
+          <Spacing mb={PADDING_UNITS}>
+            <Text monospace muted small>
+              {capitalize(gdp?.object_type || '')}
+            </Text>
+            <NextLink
+              as={`/pipelines/${gdp?.object_uuid}/edit`}
+              href={'/pipelines/[pipeline]/edit'}
+              passHref
+            >
+              <Link
+                monospace
+                openNewWindow
+              >
+                {gdp?.object_uuid}
+              </Link>
+            </NextLink>
+          </Spacing>
+
+          <Spacing mb={1}>
+            <Text monospace muted small>
+              Override global data product settings
+            </Text>
+            <Link
+              monospace
+              onClick={() => openSidekickView(ViewKeyEnum.BLOCK_SETTINGS)}
+            >
+              Customize block settings
+            </Link>
+          </Spacing>
+        </CodeHelperStyle>
+      );
+    }
+
+    return (
+      <>
+        <CodeEditor
+          autoHeight
+          autocompleteProviders={autocompleteProviders}
+          block={block}
+          height={height}
+          language={blockLanguage}
+          onChange={(val: string) => {
+            setContent(val);
+            onChange?.(val);
+          }}
+          onDidChangeCursorPosition={onDidChangeCursorPosition}
+          placeholder={BlockTypeEnum.DBT === blockType && BlockLanguageEnum.YAML === blockLanguage
+            ? `e.g. --select ${dbtProjectName || 'project'}/models --exclude ${dbtProjectName || 'project'}/models/some_dir`
+            : 'Start typing here...'
+          }
+          selected={selected}
+          setSelected={setSelected}
+          setTextareaFocused={setTextareaFocused}
+          shortcuts={hideRunButton
+            ? []
+            : [
+              (monaco, editor) => executeCode(monaco, () => {
+                if (!hideRunButton) {
+                  runBlockAndTrack({
+                    /*
+                    * This block doesn't get updated when the upstream dependencies change,
+                    * so we need to update the shortcuts in the CodeEditor component.
+                    */
+                    block,
+                    code: editor.getValue(),
+                  });
+                }
+              }),
+            ]
+          }
+          textareaFocused={textareaFocused}
+          value={content}
+          width="100%"
+        />
+        {hasCallback && (
+          <>
+            <Divider />
+            <Spacing mt={1}>
+              <CodeHelperStyle normalPadding>
+                <Text small>
+                  Callback block: define @on_success or @on_failure callbacks for this block.
+                </Text>
+                <Text monospace muted small>
+                  kwargs<Text inline monospace muted small> → </Text>
+                  global variables
+                </Text>
+              </CodeHelperStyle>
+              <CodeEditor
+                autoHeight
+                autocompleteProviders={autocompleteProviders}
+                language="python"
+                onChange={(val: string) => {
+                  setCallbackContent(val);
+                  onCallbackChange?.(val);
+                }}
+                onDidChangeCursorPosition={onDidChangeCursorPosition}
+                placeholder="Start typing here..."
+                selected={selected}
+                setSelected={setSelected}
+                setTextareaFocused={setTextareaFocused}
+                textareaFocused={textareaFocused}
+                value={callbackContent}
+                width="100%"
+              />
+            </Spacing>
+          </>
+        )}
+      </>
+    );
+  }, [
     autocompleteProviders,
     block,
     blockLanguage,
@@ -864,12 +947,15 @@ function CodeBlock({
     callbackContent,
     content,
     dbtProjectName,
+    globalDataProduct,
+    globalDataProductsByUUID,
     hasCallback,
     height,
     hideRunButton,
     onCallbackChange,
     onChange,
     onDidChangeCursorPosition,
+    openSidekickView,
     replicatedBlockUUID,
     runBlockAndTrack,
     selected,
@@ -880,14 +966,16 @@ function CodeBlock({
   ]);
 
   useEffect(() => {
-    setAutocompleteProviders({
-      python: buildAutocompleteProvider({
-        autocompleteItems,
-        block,
-        blocks,
-        pipeline,
-      }),
-    });
+    if (autocompleteItems) {
+      setAutocompleteProviders({
+        python: buildAutocompleteProvider({
+          autocompleteItems,
+          block,
+          blocks,
+          pipeline,
+        }),
+      });
+    }
   }, [
     autocompleteItems,
     block,
@@ -1091,7 +1179,7 @@ function CodeBlock({
             }}
             bottomBorder={isMarkdown}
             onClick={() => onClickSelectBlock()}
-            ref={drag}
+            ref={disableDrag ? null : drag}
             zIndex={blocksLength + 1 - (blockIdx || 0)}
           >
             <FlexContainer
@@ -1101,7 +1189,10 @@ function CodeBlock({
               <Flex alignItems="center" flex={1}>
                 <FlexContainer alignItems="center">
                   <Badge monospace>
-                    {ABBREV_BLOCK_LANGUAGE_MAPPING[blockLanguage]}
+                    {BlockTypeEnum.GLOBAL_DATA_PRODUCT === block?.type
+                      ? 'GDP'
+                      : ABBREV_BLOCK_LANGUAGE_MAPPING[blockLanguage]
+                    }
                   </Badge>
 
                   <Spacing mr={1} />
@@ -1125,6 +1216,7 @@ function CodeBlock({
                     <Text
                       color={color}
                       monospace
+                      noWrapping
                     >
                       {(
                         isDBT
@@ -1134,7 +1226,10 @@ function CodeBlock({
                     </Text>
                   </FlyoutMenuWrapper>
 
-                  {[BlockTypeEnum.CUSTOM, BlockTypeEnum.SCRATCHPAD].includes(blockType) && (
+                  {!hideHeaderInteractiveInformation && [
+                    BlockTypeEnum.CUSTOM,
+                    BlockTypeEnum.SCRATCHPAD,
+                  ].includes(blockType) && (
                     <>
                       &nbsp;
                       <Button
@@ -1150,197 +1245,177 @@ function CodeBlock({
                   )}
                 </FlexContainer>
 
-                <Spacing mr={PADDING_UNITS} />
+                {!hideHeaderInteractiveInformation && (
+                  <>
+                    <Spacing mr={PADDING_UNITS} />
 
-                <FileFill size={UNIT * 1.5} />
+                    <FileFill size={UNIT * 1.5} />
 
-                <Spacing mr={1} />
+                    <Spacing mr={1} />
 
-                <FlexContainer alignItems="center">
-                  {isDBT && BlockLanguageEnum.YAML !== blockLanguage && (
-                    <Tooltip
-                      block
-                      label={getModelName(block, {
-                        fullPath: true,
-                      })}
-                      size={null}
-                    >
-                      <Text monospace muted>
-                        {getModelName(block)}
-                      </Text>
-                    </Tooltip>
-                  )}
-
-                  {(!isDBT || BlockLanguageEnum.YAML === blockLanguage) && (
-                    <LabelWithValueClicker
-                      bold={false}
-                      inputValue={newBlockUuid}
-                      monospace
-                      muted
-                      notRequired
-                      onBlur={() => setTimeout(() => {
-                        setAnyInputFocused(false);
-                        setIsEditingBlockName(false);
-                      }, 300)}
-                      onChange={(e) => {
-                        setNewBlockUuid(e.target.value);
-                        e.preventDefault();
-                      }}
-                      onClick={() => {
-                        setAnyInputFocused(true);
-                        setIsEditingBlockName(true);
-                      }}
-                      onFocus={() => {
-                        setAnyInputFocused(true);
-                        setIsEditingBlockName(true);
-                      }}
-                      stacked
-                      value={!isEditingBlockName && blockUUID}
-                    />
-                  )}
-
-                  {isEditingBlockName && !isDBT && (
-                    <>
-                      <Spacing ml={1} />
-                      <Link
-                        // @ts-ignore
-                        onClick={() => savePipelineContent({
-                          block: {
-                            name: newBlockUuid,
-                            uuid: blockUUID,
-                          },
-                        }).then(() => {
-                          setIsEditingBlockName(false);
-                          fetchPipeline();
-                          fetchFileTree();
-                        })}
-                        preventDefault
-                        sameColorAsText
-                        small
-                      >
-                        Update name
-                      </Link>
-                    </>
-                  )}
-                </FlexContainer>
-
-                <Spacing mr={2} />
-
-                {(!BLOCK_TYPES_WITH_NO_PARENTS.includes(blockType)
-                  && mainContainerWidth > 700) && (
-                  <Tooltip
-                    appearBefore
-                    block
-                    label={`
-                      ${pluralize('parent block', numberOfParentBlocks)}. ${numberOfParentBlocks === 0
-                        ? 'Click to select 1 or more blocks to depend on.'
-                        : 'Edit parent blocks.'
-                      }
-                    `}
-                    size={null}
-                    widthFitContent={numberOfParentBlocks >= 1}
-                  >
-                    <Button
-                      noBackground
-                      noBorder
-                      noPadding
-                      onClick={() => {
-                        setSelected(true);
-                        setEditingBlock({
-                          upstreamBlocks: {
-                            block,
-                            values: blockUpstreamBlocks?.map(uuid => ({ uuid })),
-                          },
-                        });
-                      }}
-                      >
-                      <FlexContainer alignItems="center">
-                        <Text
-                          monospace={numberOfParentBlocks >= 1}
-                          small
-                          underline={numberOfParentBlocks === 0}
+                    <FlexContainer alignItems="center">
+                      {isDBT && BlockLanguageEnum.YAML !== blockLanguage && (
+                        <Tooltip
+                          block
+                          label={getModelName(block, {
+                            fullPath: true,
+                          })}
+                          size={null}
                         >
-                          {numberOfParentBlocks === 0 && 'Edit parent blocks'}
-                          {numberOfParentBlocks >= 1 && pluralize('parent block', numberOfParentBlocks)}
-                        </Text>
+                          <Text monospace muted>
+                            {getModelName(block)}
+                          </Text>
+                        </Tooltip>
+                      )}
 
-                        <Spacing mr={1} />
+                      {(!isDBT || BlockLanguageEnum.YAML === blockLanguage) && (
+                        <Link
+                          default
+                          monospace
+                          noWrapping
+                          onClick={() => showUpdateBlockModal(block, blockName)}
+                          preventDefault
+                          sameColorAsText
+                        >
+                          {blockUUID}
+                        </Link>
+                      )}
+                    </FlexContainer>
 
-                        {numberOfParentBlocks === 0 && <ParentEmpty size={UNIT * 3} />}
-                        {numberOfParentBlocks >= 1 &&  <ParentLinked size={UNIT * 3} />}
-                      </FlexContainer>
-                    </Button>
-                  </Tooltip>
-                )}
+                    <Spacing mr={2} />
 
-                {blockPipelinesLength >= 2 && (
-                  <Spacing ml={2}>
-                    <Tooltip
-                      block
-                      label={`This block is used in ${blockPipelinesLength} pipelines.`}
-                      size={null}
-                      widthFitContent
-                    >
-                      <Link
-                        default
-                        monospace
-                        onClick={() => openSidekickView(ViewKeyEnum.BLOCK_SETTINGS)}
-                        preventDefault
-                        small
+                    {(!BLOCK_TYPES_WITH_NO_PARENTS.includes(blockType)
+                      && mainContainerWidth > 800) && (
+                      <Tooltip
+                        appearBefore
+                        block
+                        label={`
+                          ${pluralize('parent block', numberOfParentBlocks)}. ${numberOfParentBlocks === 0
+                            ? 'Click to select 1 or more blocks to depend on.'
+                            : 'Edit parent blocks.'
+                          }
+                        `}
+                        size={null}
+                        widthFitContent={numberOfParentBlocks >= 1}
                       >
-                        {blockPipelinesLength} pipelines
-                      </Link>
-                    </Tooltip>
-                  </Spacing>
+                        <Button
+                          noBackground
+                          noBorder
+                          noPadding
+                          onClick={() => {
+                            setSelected(true);
+                            setEditingBlock({
+                              upstreamBlocks: {
+                                block,
+                                values: blockUpstreamBlocks?.map(uuid => ({ uuid })),
+                              },
+                            });
+                          }}
+                          >
+                          <FlexContainer alignItems="center">
+                            {numberOfParentBlocks === 0 && <ParentEmpty size={UNIT * 3} />}
+                            {numberOfParentBlocks >= 1 &&  <ParentLinked size={UNIT * 3} />}
+
+                            <Spacing mr={1} />
+
+                            <Text
+                              default
+                              monospace={numberOfParentBlocks >= 1}
+                              noWrapping
+                              small
+                              underline={numberOfParentBlocks === 0}
+                            >
+                              {numberOfParentBlocks === 0 && 'Edit parents'}
+                              {numberOfParentBlocks >= 1 && pluralize('parent', numberOfParentBlocks)}
+                            </Text>
+                          </FlexContainer>
+                        </Button>
+                      </Tooltip>
+                    )}
+
+                    {(blockPipelinesLength >= 2 && mainContainerWidth > 725) && (
+                      <>
+                        <Spacing ml={2} />
+                        <Tooltip
+                          block
+                          label={`This block is used in ${blockPipelinesLength} pipelines.`}
+                          size={null}
+                          widthFitContent
+                        >
+                          <FlexContainer alignItems="center">
+                            <DiamondShared size={14} />
+                            <Spacing ml={1} />
+                            <Link
+                              default
+                              monospace
+                              noWrapping
+                              onClick={() => openSidekickView(ViewKeyEnum.BLOCK_SETTINGS)}
+                              preventDefault
+                              small
+                            >
+                              {blockPipelinesLength} pipelines
+                            </Link>
+                          </FlexContainer>
+                        </Tooltip>
+                      </>
+                    )}
+                  </>
                 )}
               </Flex>
 
-              <CommandButtons
-                addNewBlock={addNewBlock}
-                addWidget={addWidget}
-                block={block}
-                blocks={blocks}
-                deleteBlock={deleteBlock}
-                executionState={executionState}
-                fetchFileTree={fetchFileTree}
-                fetchPipeline={fetchPipeline}
-                interruptKernel={interruptKernel}
-                isEditingBlock={isEditingBlock}
-                openSidekickView={openSidekickView}
-                pipeline={pipeline}
-                runBlock={hideRunButton ? null : runBlockAndTrack}
-                savePipelineContent={savePipelineContent}
-                setErrors={setErrors}
-                setIsEditingBlock={setIsEditingBlock}
-                setOutputCollapsed={setOutputCollapsed}
-              />
+              {runBlock && (
+                <CommandButtons
+                  addNewBlock={addNewBlock}
+                  addWidget={addWidget}
+                  block={block}
+                  blocks={blocks}
+                  deleteBlock={deleteBlock}
+                  executionState={executionState}
+                  fetchFileTree={fetchFileTree}
+                  fetchPipeline={fetchPipeline}
+                  hideExtraButtons={hideExtraCommandButtons}
+                  interruptKernel={interruptKernel}
+                  isEditingBlock={isEditingBlock}
+                  openSidekickView={openSidekickView}
+                  pipeline={pipeline}
+                  project={project}
+                  runBlock={hideRunButton ? null : runBlockAndTrack}
+                  savePipelineContent={savePipelineContent}
+                  setErrors={setErrors}
+                  setIsEditingBlock={setIsEditingBlock}
+                  setOutputCollapsed={setOutputCollapsed}
+                  showConfigureProjectModal={showConfigureProjectModal}
+                />
+              )}
 
-              <Spacing px={1}>
-                <Button
-                  basic
-                  iconOnly
-                  noPadding
-                  onClick={() => {
-                    setCodeCollapsed((collapsedPrev) => {
-                      set(codeCollapsedUUID, !collapsedPrev);
-                      return !collapsedPrev;
-                    });
-
-                    if (!codeCollapsed) {
-                      setOutputCollapsed(() => {
-                        set(outputCollapsedUUID, true);
-                        return true;
+              {!hideExtraCommandButtons && (
+                <Spacing px={1}>
+                  <Button
+                    basic
+                    iconOnly
+                    noPadding
+                    onClick={() => {
+                      setCodeCollapsed((collapsedPrev) => {
+                        set(codeCollapsedUUID, !collapsedPrev);
+                        return !collapsedPrev;
                       });
+
+                      if (!codeCollapsed) {
+                        setOutputCollapsed(() => {
+                          set(outputCollapsedUUID, true);
+                          return true;
+                        });
+                      }
+                    }}
+                    transparent
+                  >
+                    {codeCollapsed
+                      ? <ChevronDown muted size={UNIT * 2} />
+                      : <ChevronUp muted size={UNIT * 2} />
                     }
-                  }}
-                  transparent
-                >
-                  {codeCollapsed
-                    ? <ChevronDown muted size={UNIT * 2} />
-                    : <ChevronUp muted size={UNIT * 2} />
-                  }
-                </Button>
-              </Spacing>
+                  </Button>
+                </Spacing>
+              )}
             </FlexContainer>
           </BlockHeaderStyle>
 
@@ -1352,13 +1427,14 @@ function CodeBlock({
               className={selected && textareaFocused ? 'selected' : null}
               hasOutput={!!buttonTabs || hasOutput}
               lightBackground={isMarkdown && !isEditingBlock}
+              onClick={onClickSelectBlock}
               onDoubleClick={() => {
                 if (isMarkdown && !isEditingBlock) {
                   setIsEditingBlock(true);
                 }
               }}
             >
-              {BlockTypeEnum.DBT === blockType
+              {!hideExtraConfiguration && BlockTypeEnum.DBT === blockType
                 && !codeCollapsed
                 && (
                 <CodeHelperStyle normalPadding>
@@ -1375,7 +1451,6 @@ function CodeBlock({
                             setAnyInputFocused(false);
                           }, 300)}
                           onChange={(e) => {
-                            // @ts-ignore
                             updateDataProviderConfig({
                               [CONFIG_KEY_DBT_PROFILE_TARGET]: '',
                               [CONFIG_KEY_DBT_PROJECT_NAME]: e.target.value,
@@ -1421,7 +1496,6 @@ function CodeBlock({
                             setAnyInputFocused(false);
                           }, 300)}
                           onChange={(e) => {
-                            // @ts-ignore
                             updateDataProviderConfig({
                               [CONFIG_KEY_DBT_PROFILE_TARGET]: e.target.value,
                             });
@@ -1431,12 +1505,7 @@ function CodeBlock({
                           onFocus={() => {
                             setAnyInputFocused(true);
                           }}
-                          placeholder={dbtProjectName
-                            ? isSQLBlock
-                              ? dbtProfileData?.target
-                              : null
-                            : 'Select project first'
-                          }
+                          placeholder={dbtProfileTargetSelectPlaceholder}
                           small
                           value={dbtProfileTarget || ''}
                         >
@@ -1456,7 +1525,6 @@ function CodeBlock({
                             setAnyInputFocused(false);
                           }, 300)}
                           onChange={(e) => {
-                            // @ts-ignore
                             updateDataProviderConfig({
                               [CONFIG_KEY_DBT_PROFILE_TARGET]: e.target.value,
                             });
@@ -1467,9 +1535,7 @@ function CodeBlock({
                             setAnyInputFocused(true);
                           }}
                           placeholder={dbtProjectName
-                            ? isSQLBlock
-                              ? dbtProfileData?.target
-                              : null
+                            ? (dbtProfileData?.target || 'Enter target')
                             : 'Select project first'
                           }
                           small
@@ -1511,6 +1577,11 @@ function CodeBlock({
                               onClick={(e) => {
                                 pauseEvent(e);
                                 setManuallyEnterTarget(!manuallyEnterTarget);
+                                if (manuallyEnterTarget) {
+                                  updateDataProviderConfig({
+                                    [CONFIG_KEY_DBT_PROFILE_TARGET]: null,
+                                  });
+                                }
                               }}
                             />
                             <span>&nbsp;</span>
@@ -1625,7 +1696,7 @@ function CodeBlock({
                 </CodeHelperStyle>
               )}
 
-              {isSQLBlock
+              {!hideExtraConfiguration && isSQLBlock
                 && !codeCollapsed
                 && BlockTypeEnum.DBT !== blockType
                 && (
@@ -2208,7 +2279,13 @@ function CodeBlock({
             }}
           >
             {addNewBlocksVisible && addNewBlock && (
-              <Spacing mt={2}>
+              <Spacing
+                mt={2}
+                mx={2}
+                style={{
+                  width: '100%',
+                }}
+              >
                 <AddNewBlocks
                   addNewBlock={(newBlock: BlockRequestPayloadType) => {
                     let content = newBlock.content;
@@ -2269,8 +2346,12 @@ function CodeBlock({
                   hideDbt={isStreamingPipeline}
                   onClickAddSingleDBTModel={onClickAddSingleDBTModel}
                   pipeline={pipeline}
+                  project={project}
                   setAddNewBlockMenuOpenIdx={setAddNewBlockMenuOpenIdx}
                   setCreatingNewDBTModel={setCreatingNewDBTModel}
+                  showBrowseTemplates={showBrowseTemplates}
+                  showConfigureProjectModal={showConfigureProjectModal}
+                  showGlobalDataProducts={showGlobalDataProducts}
                 />
               </Spacing>
             )}

@@ -23,6 +23,10 @@ def is_disable_pipeline_edit_access():
     return DISABLE_NOTEBOOK_EDIT_ACCESS >= 1
 
 
+# ------------------------- DISABLE TERMINAL ----------------------
+
+DISABLE_TERMINAL = os.getenv('DISABLE_TERMINAL', '0').lower() in ('true', '1', 't')
+
 # ----------------- Authentication settings ----------------
 REQUIRE_USER_AUTHENTICATION = \
     os.getenv('REQUIRE_USER_AUTHENTICATION', 'False').lower() in ('true', '1', 't')
@@ -45,6 +49,8 @@ ACTIVE_DIRECTORY_DIRECTORY_ID = os.getenv('ACTIVE_DIRECTORY_DIRECTORY_ID', None)
 
 # ----------------------------------------------------------
 
+HOSTNAME = os.getenv('HOSTNAME')
+REDIS_URL = os.getenv('REDIS_URL')
 SERVER_VERBOSITY = os.getenv('SERVER_VERBOSITY', 'info') or 'info'
 
 SHELL_COMMAND = os.getenv('SHELL_COMMAND', None)
@@ -60,6 +66,10 @@ NEW_RELIC_CONFIG_PATH = os.getenv('NEW_RELIC_CONFIG_PATH', '')
 
 DEFAULT_LOCALHOST_URL = 'http://localhost:6789'
 MAGE_PUBLIC_HOST = os.getenv('MAGE_PUBLIC_HOST') or DEFAULT_LOCALHOST_URL
+
+# The base path variable should not include a leading forward slash
+# e.g. BASE_PATH = 'test_prefix' -> localhost:6789/test_prefix/pipelines
+BASE_PATH = os.getenv('MAGE_BASE_PATH')
 
 # List of environment variables used to configure Mage. The value of these settings
 # will be copied between workspaces.

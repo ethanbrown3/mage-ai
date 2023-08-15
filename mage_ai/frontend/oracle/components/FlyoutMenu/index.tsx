@@ -9,7 +9,7 @@ import KeyboardTextGroup, { NumberOrString } from '@oracle/elements/KeyboardText
 import Spacing from '@oracle/elements/Spacing';
 import Text from '@oracle/elements/Text';
 import Tooltip from '@oracle/components/Tooltip';
-import { ArrowRight } from '@oracle/icons';
+import { ChevronRight } from '@oracle/icons';
 import {
   FlyoutMenuContainerStyle,
   LinkAnchorStyle,
@@ -82,6 +82,7 @@ function FlyoutMenu({
   const [submenuVisible, setSubmenuVisible] = useState<{ [uuid: string]: boolean }>({});
   const [submenuTopOffset, setSubmenuTopOffset] = useState<number>(0);
   const [submenuTopOffset2, setSubmenuTopOffset2] = useState<number>(0);
+  const [submenuTopOffset3, setSubmenuTopOffset3] = useState<number>(0);
   const {
     height,
   } = parentRef?.current?.getBoundingClientRect?.() || {};
@@ -182,7 +183,12 @@ function FlyoutMenu({
           top: (
             depth === 1
               ? (height || 0) + topOffset
-              : ((depth === 2 ? submenuTopOffset : submenuTopOffset2) || 0)
+              : ((depth === 2
+                ? submenuTopOffset
+                : (depth === 3
+                  ? submenuTopOffset2
+                  : submenuTopOffset3)
+              ) || 0)
           ),
         }}
         width={width}
@@ -211,7 +217,10 @@ function FlyoutMenu({
 
           if (isGroupingTitle) {
             return (
-              <TitleContainerStyle key={uuid}>
+              <TitleContainerStyle
+                key={uuid}
+                roundedStyle={roundedStyle}
+              >
                 {typeof labelToRender === 'string' && (
                   <Text bold muted noWrapping>
                     {labelToRender}
@@ -236,9 +245,9 @@ function FlyoutMenu({
                   e.preventDefault();
                 }
 
-                if (openConfirmationDialogue) {
-                  setConfirmationDialogueOpen(true);
-                  setConfirmationAction(() => onClick);
+                if (openConfirmationDialogue && !disabled) {
+                  setConfirmationDialogueOpen?.(true);
+                  setConfirmationAction?.(() => onClick);
                   onClickCallback?.();
                 } else if (onClick && !disabled) {
                   onClick?.();
@@ -254,6 +263,8 @@ function FlyoutMenu({
                   setSubmenuTopOffset(refArg.current[uuid]?.current?.offsetTop || 0);
                 } else if (depth === 2) {
                   setSubmenuTopOffset2(refArg.current[uuid]?.current?.offsetTop || 0);
+                } else if (depth === 3) {
+                  setSubmenuTopOffset3(refArg.current[uuid]?.current?.offsetTop || 0);
                 }
               }}
               onMouseLeave={() => {
@@ -274,7 +285,7 @@ function FlyoutMenu({
                     {beforeIcon &&
                       <>
                         {beforeIcon}
-                        <Spacing mr="4px" />
+                        <Spacing mr={1} />
                       </>
                     }
                     {typeof labelToRender === 'string' && (
@@ -283,7 +294,7 @@ function FlyoutMenu({
                         disabled={disabled}
                         noWrapping
                       >
-                        {labelToRender}
+                        <div role="menuitem">{labelToRender}</div>
                       </Text>
                     )}
                   </Flex>
@@ -293,7 +304,7 @@ function FlyoutMenu({
 
                 {items && (
                   <Spacing ml={2}>
-                    <ArrowRight />
+                    <ChevronRight />
                   </Spacing>
                 )}
 
